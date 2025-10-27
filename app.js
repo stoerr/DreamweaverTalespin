@@ -1,4 +1,7 @@
 // Store API key in localStorage for convenience
+// Note: localStorage is appropriate for this client-side-only app where the API key
+// is used directly from the browser to call OpenAI's API. The key never goes to our servers.
+// Users should be aware that localStorage is accessible to any script on the same origin.
 const API_KEY_STORAGE = 'openai_api_key';
 
 // DOM elements
