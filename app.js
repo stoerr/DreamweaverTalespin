@@ -91,12 +91,28 @@ async function generateStory() {
         });
 
         if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(errorData.error?.message || 'Failed to generate story');
+            let errorMessage = 'Failed to generate story';
+            try {
+                const errorData = await response.json();
+                errorMessage = errorData.error?.message || errorMessage;
+            } catch (e) {
+                // If parsing JSON fails, use default message
+            }
+            throw new Error(errorMessage);
         }
 
         const data = await response.json();
+        
+        // Validate response structure
+        if (!data.choices || !Array.isArray(data.choices) || data.choices.length === 0) {
+            throw new Error('Invalid response from OpenAI API');
+        }
+        
         const story = data.choices[0].message.content;
+        
+        if (!story) {
+            throw new Error('No story content in response');
+        }
 
         // Display the story
         displayStory(story);
