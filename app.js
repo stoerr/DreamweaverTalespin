@@ -115,8 +115,8 @@ async function generateStory() {
         
         const story = data.choices[0].message.content;
         
-        // Validate story content is not empty or whitespace
-        if (!story.trim()) {
+        // Validate story content is a string and not empty or whitespace
+        if (typeof story !== 'string' || !story.trim()) {
             throw new Error('No story content in response');
         }
 
