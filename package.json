@@ -1,0 +1,13 @@
+{
+  "name": "storyteller",
+  "version": "1.0.0",
+  "description": "AI-powered storytelling single page application",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": ["ai", "storytelling", "openai"],
+  "author": "",
+  "license": "MIT"
+}
