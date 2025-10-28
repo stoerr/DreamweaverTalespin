@@ -1,13 +1,12 @@
-// filepath: /Users/hans-peter.stoerr/dev/ml/storyteller/docs/app.js
 // Store API key in localStorage for convenience
 // Note: localStorage is appropriate for this client-side-only app where the API key
 // is used directly from the browser to call OpenAI's API. The key never goes to our servers.
 // Users should be aware that localStorage is accessible to any script on the same origin.
 const API_KEY_STORAGE = 'chatgpt_api_key';
 // Key from Requirements.md to store/restore the last story prompt
-const STORY_PROMPT_STORAGE = 'net.stoerr.aiexperiments.storyteller.storyprompt';
+const STORY_PROMPT_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.storyprompt';
 // Store last selected voice
-const VOICE_STORAGE = 'net.stoerr.aiexperiments.storyteller.voice';
+const VOICE_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.voice';
 
 // DOM elements
 const outlineSystemPromptInput = document.getElementById('outline-system-prompt');

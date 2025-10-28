@@ -1,4 +1,5 @@
-# storyteller
+# Dreamweaver Talespin
+
 Experiment to use AI to tell stories
 
 ## Description
