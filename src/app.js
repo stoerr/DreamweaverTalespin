@@ -1,8 +1,11 @@
+// filepath: /Users/hans-peter.stoerr/dev/ml/storyteller/src/app.js
 // Store API key in localStorage for convenience
 // Note: localStorage is appropriate for this client-side-only app where the API key
 // is used directly from the browser to call OpenAI's API. The key never goes to our servers.
 // Users should be aware that localStorage is accessible to any script on the same origin.
 const API_KEY_STORAGE = 'chatgpt_api_key';
+// Key from Requirements.md to store/restore the last story prompt
+const STORY_PROMPT_STORAGE = 'net.stoerr.aiexperiments.storyteller.storyprompt';
 
 // DOM elements
 const outlineSystemPromptInput = document.getElementById('outline-system-prompt');
@@ -19,6 +22,16 @@ const stopBtn = document.getElementById('stop-btn');
 const voiceSelect = document.getElementById('voice-select');
 const languageSelect = document.getElementById('language-select');
 const autoplayCheckbox = document.getElementById('autoplay');
+const storyExamplesSelect = document.getElementById('story-examples');
+
+// Example story prompts shown in the examples dropdown
+const STORY_PROMPTS_EXAMPLES = [
+  "A curious child discovers a hidden city beneath the ocean",
+  "An inventor travels back in time to fix a mistake but creates unexpected consequences",
+  "A small village learns its guardian is a forgotten robot",
+  "A lonely librarian finds books that come to life at midnight",
+  "Two rival space crews must cooperate to survive an unknown signal"
+];
 
 let outline = []; // {title, description, chapterText (optional)}
 let selectedIndex = null;
@@ -55,6 +68,49 @@ window.addEventListener('DOMContentLoaded', async () => {
     console.warn('Could not load prompt files:', e);
   }
 
+  // Restore last story prompt if present
+  try {
+    const last = localStorage.getItem(STORY_PROMPT_STORAGE);
+    if (last && storyPromptInput) storyPromptInput.value = last;
+  } catch (e) {
+    console.warn('Could not read stored story prompt:', e);
+  }
+
+  // Populate examples dropdown
+  if (storyExamplesSelect) {
+    // clear existing (keep first placeholder if present)
+    storyExamplesSelect.innerHTML = '';
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = '(Select an example to fill the story prompt)';
+    storyExamplesSelect.appendChild(placeholder);
+    STORY_PROMPTS_EXAMPLES.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s;
+      opt.textContent = s;
+      storyExamplesSelect.appendChild(opt);
+    });
+    storyExamplesSelect.addEventListener('change', () => {
+      const val = storyExamplesSelect.value || '';
+      if (val && storyPromptInput) {
+        storyPromptInput.value = val;
+        // save immediately
+        try { localStorage.setItem(STORY_PROMPT_STORAGE, val); } catch(e){/*ignore*/}
+      }
+    });
+  }
+
+  // Save story prompt on input (debounced)
+  if (storyPromptInput) {
+    let t = null;
+    storyPromptInput.addEventListener('input', () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => {
+        try { localStorage.setItem(STORY_PROMPT_STORAGE, storyPromptInput.value || ''); } catch(e){}
+      }, 400);
+    });
+  }
+
   // Populate voices and language selector
   populateVoicesAndLanguages();
   window.speechSynthesis.onvoiceschanged = populateVoicesAndLanguages;
@@ -80,7 +136,9 @@ function populateVoicesAndLanguages() {
       opt.textContent = l;
       languageSelect.appendChild(opt);
     });
+    // If user had a previous selection, restore it. Otherwise prefer English if available.
     if (prev) languageSelect.value = prev;
+    else if (langs.includes('en')) languageSelect.value = 'en';
   }
 
   // Populate voiceSelect filtered by language
@@ -98,12 +156,37 @@ function refreshVoiceSelect() {
   });
   // If no voices match the language, fall back to all voices
   const toShow = filtered.length ? filtered : voices;
+
+  // Sort voices by a simple quality heuristic: default and known high-quality providers first, then language match
+  function voiceQualityScore(v) {
+    let score = 0;
+    if (v.default) score += 100;
+    const name = (v.name || '').toLowerCase();
+    // Heuristic provider/quality keywords
+    if (name.includes('google') || name.includes('neural') || name.includes('premium') || name.includes('high')) score += 50;
+    if (name.includes('microsoft') || name.includes('azure')) score += 40;
+    // prefer exact language match
+    if (languageSelect && languageSelect.value) {
+      const p = (v.lang || '').split('-')[0];
+      if (p === languageSelect.value) score += 20;
+    }
+    // shorter, clean names slightly preferred
+    score += Math.max(0, 10 - (v.name || '').length * 0.1);
+    return score;
+  }
+
+  toShow.sort((a, b) => voiceQualityScore(b) - voiceQualityScore(a));
   toShow.forEach(v => {
     const opt = document.createElement('option');
     opt.value = v.name;
     opt.textContent = `${v.name} (${v.lang})${v.default ? ' — default' : ''}`;
     voiceSelect.appendChild(opt);
   });
+
+  // Select the top-scoring voice by default (if nothing selected)
+  if (voiceSelect.options.length && !voiceSelect.value) {
+    voiceSelect.selectedIndex = 0;
+  }
 }
 
 if (languageSelect) {

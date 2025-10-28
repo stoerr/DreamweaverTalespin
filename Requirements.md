@@ -15,6 +15,8 @@ And third, the chapters will be read aloud, one after each other, while the next
 - There is an autoplay switch, which will automatically read the next chapter when the current one is finished. That is enabled by default.
 - There should be a language selector that influences both the story generation and the text-to-speech voice. (The voice names e.g. contain `en-` for english, `de-` for German, etc. - only the voices matching those have to be shown in the selector.)
 - There should be a dropdown with examples for story ideas just below the story prompt. Selecting one fills the story idea input field.
+- The voices should be sorted by quality (highest quality first).
+- The last story prompt should be stored in local storage and restored on reload - key 'net.stoerr.aiexperiments.storyteller.storyprompt'.
 
 ## Some technical details
 
