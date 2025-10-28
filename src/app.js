@@ -132,8 +132,30 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // update play button state on load
   updatePlayButtonState();
+
+  // set up auto-resize behavior for textareas: expand to 10 rows on focus, restore on blur
+  try { setupTextareaAutoResize(); } catch (e) { /* non-fatal */ }
 });
 
+// Expand a textarea to 10 rows on focus and restore original rows on blur
+function setupTextareaAutoResize() {
+  const areas = Array.from(document.querySelectorAll('textarea'));
+  areas.forEach(area => {
+    // store original rows (as number)
+    const orig = parseInt(area.getAttribute('rows') || area.rows || 3, 10) || 3;
+    area.dataset.origRows = String(orig);
+
+    area.addEventListener('focus', () => {
+      try { area.rows = 10; } catch (e) {}
+    });
+
+    area.addEventListener('blur', () => {
+      try { area.rows = parseInt(area.dataset.origRows || String(orig), 10); } catch (e) {}
+    });
+  });
+}
+
+// Populate voices and languages
 function populateVoicesAndLanguages() {
   const voices = synth.getVoices();
   // Build languages set from voice.lang (prefix before '-')
@@ -428,7 +450,7 @@ async function generateChapter(idx, foreground = true) {
     messages.push({ role: 'system', content: systemPrompt });
     messages.push({ role: 'user', content: userContent });
 
-    const resp = await callOpenAI(apiKey, messages, { temperature: 0.8, max_tokens: 1000 });
+    const resp = await callOpenAI(apiKey, messages);
 
     item.chapterText = (resp || '').trim();
 
@@ -558,10 +580,10 @@ function speakChapter(idx) {
 // OpenAI helper (simple fetch to chat completions)
 async function callOpenAI(apiKey, messages, opts = {}) {
   const body = {
-    model: opts.model || 'gpt-3.5-turbo',
+    model: opts.model || 'gpt-4o',
     messages: messages,
-    temperature: opts.temperature ?? 0.7,
-    max_tokens: typeof opts.max_tokens === 'number' ? opts.max_tokens : 500,
+    temperature: opts.temperature ?? 1,
+    max_completion_tokens: typeof opts.max_tokens === 'number' ? opts.max_tokens : 1024,
     // top_p: opts.top_p,
     // frequency_penalty: opts.frequency_penalty,
     // presence_penalty: opts.presence_penalty,
