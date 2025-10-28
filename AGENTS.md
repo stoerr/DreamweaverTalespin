@@ -1,6 +1,6 @@
 # Instruction for coding agents
 
-- Always read Requirements.md first before starting to code to get an understanding what this is about.
+- Always read Requirements.md first before starting to code to get an understanding what this is about. This file is most important and authoritative for the requirements.
 - Do not run the server yourself, also not for testing. Let the user run it at the end. Do not try to test yourself except if explicitly told to do so.
 
 
