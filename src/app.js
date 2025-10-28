@@ -105,19 +105,19 @@ async function generateStory() {
         }
 
         const data = await response.json();
-        
+
         // Validate response structure
         if (!data.choices || !Array.isArray(data.choices) || data.choices.length === 0) {
             throw new Error('Invalid response from OpenAI API');
         }
-        
+
         // Validate message structure
         if (!data.choices[0].message || !data.choices[0].message.content) {
             throw new Error('Invalid message structure in API response');
         }
-        
+
         const story = data.choices[0].message.content;
-        
+
         // Validate story content is a string and not empty or whitespace
         if (typeof story !== 'string' || !story.trim()) {
             throw new Error('No story content in response');

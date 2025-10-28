@@ -2,10 +2,10 @@
   "name": "storyteller",
   "version": "1.0.0",
   "description": "AI-powered storytelling single page application",
-  "main": "server.js",
+  "main": "dev-server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js"
+    "start": "node dev-server.js",
+    "dev": "node dev-server.js"
   },
   "keywords": ["ai", "storytelling", "openai"],
   "author": "",
