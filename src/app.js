@@ -248,17 +248,28 @@ function getLanguageInstruction() {
 }
 
 // Outline generation
-generateOutlineBtn.addEventListener('click', async () => {
-  const apiKey = getApiKey();
+async function generateOutline(foreground = true) {
+  if (isGenerating) return;
+  isGenerating = true;
+  updatePlayButtonState();
+
+  let apiKey = getApiKey();
   if (!apiKey) {
     const entered = prompt('OpenAI API key not found. Please enter it:');
     if (entered) setApiKey(entered.trim());
-    else return;
+    apiKey = getApiKey();
+    if (!apiKey) {
+      isGenerating = false;
+      updatePlayButtonState();
+      return;
+    }
   }
 
-  const storyPrompt = storyPromptInput.value.trim();
+  const storyPrompt = (storyPromptInput && storyPromptInput.value || '').trim();
   if (!storyPrompt) {
-    alert('Please enter the story prompt.');
+    if (foreground) alert('Please enter the story prompt.');
+    isGenerating = false;
+    updatePlayButtonState();
     return;
   }
 
@@ -266,7 +277,7 @@ generateOutlineBtn.addEventListener('click', async () => {
   if (!systemPrompt) systemPrompt = 'You are an assistant that returns a numbered outline of chapters for a story. Return each chapter on its own line like "1. Chapter Title - short description".';
 
   generateOutlineBtn.disabled = true;
-  showMessageInChapterContainer('<div class="placeholder">Generating outline…</div>');
+  if (foreground) showMessageInChapterContainer('<div class="d-flex align-items-center"><strong>Generating outline…</strong><div class="spinner-border ms-3" role="status" aria-hidden="true"></div></div>');
 
   try {
     const langInstr = getLanguageInstruction();
@@ -279,12 +290,25 @@ generateOutlineBtn.addEventListener('click', async () => {
 
     outline = parseOutline(text);
     renderOutline();
-    showMessageInChapterContainer('<div class="placeholder">Outline generated. Select a chapter to generate it.</div>');
+    if (foreground) showMessageInChapterContainer('<div class="placeholder">Outline generated. Select a chapter to generate it.</div>');
+    return outline;
   } catch (err) {
     console.error(err);
-    showError('Failed to generate outline: ' + err.message);
+    if (foreground) showError('Failed to generate outline: ' + err.message);
+    throw err;
   } finally {
+    isGenerating = false;
     generateOutlineBtn.disabled = false;
+    updatePlayButtonState();
+  }
+}
+
+// wire the UI button
+generateOutlineBtn.addEventListener('click', async () => {
+  try {
+    await generateOutline(true);
+  } catch (e) {
+    // already shown by generateOutline
   }
 });
 
@@ -422,7 +446,21 @@ async function generateChapter(idx, foreground = true) {
 
 // Playback controls
 playBtn.addEventListener('click', async () => {
-  if (!outline.length) return;
+  // If there's no outline yet, generate it first (foreground so user sees spinner)
+  if (!outline.length) {
+    try {
+      await generateOutline(true);
+    } catch (e) {
+      // generation failed or was canceled; ensure UI state is consistent and bail
+      updatePlayButtonState();
+      return;
+    }
+    if (!outline.length) {
+      // still no outline (user may have cancelled); nothing to play
+      updatePlayButtonState();
+      return;
+    }
+  }
 
   // disable play immediately while generation/prepare starts
   playBtn.disabled = true;
@@ -523,33 +561,37 @@ async function callOpenAI(apiKey, messages, opts = {}) {
     model: opts.model || 'gpt-3.5-turbo',
     messages: messages,
     temperature: opts.temperature ?? 0.7,
-    max_tokens: typeof opts.max_tokens === 'number' ? opts.max_tokens : (opts.max_tokens || 800)
+    max_tokens: typeof opts.max_tokens === 'number' ? opts.max_tokens : 500,
+    // top_p: opts.top_p,
+    // frequency_penalty: opts.frequency_penalty,
+    // presence_penalty: opts.presence_penalty,
+    // n: 1,
+    // stream: false,
+    // stop: null,
   };
 
-  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  const resp = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
+      'Authorization': `Bearer ${apiKey}`,
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
   });
 
-  if (!res.ok) {
-    let errText = `OpenAI API returned ${res.status}`;
+  if (!resp.ok) {
+    const text = await resp.text();
+    let msg = `Error ${resp.status}`;
     try {
-      const errData = await res.json();
-      errText = errData.error?.message || errText;
-    } catch (e) {
-      // ignore
-    }
-    throw new Error(errText);
+      const json = JSON.parse(text);
+      msg = json.error?.message || msg;
+    } catch {}
+    throw new Error(msg);
   }
 
-  const data = await res.json();
-  if (!data.choices || !data.choices.length || !data.choices[0].message) {
-    throw new Error('Invalid response from OpenAI');
-  }
+  const json = await resp.json();
+  const content = json.choices?.[0]?.message?.content;
+  if (typeof content !== 'string') throw new Error('Invalid response from OpenAI');
 
-  return data.choices[0].message.content;
+  return content;
 }
