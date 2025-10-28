@@ -447,7 +447,22 @@ async function generateChapter(idx, foreground = true) {
     const langInstr = getLanguageInstruction();
     const messages = [];
     if (langInstr) messages.push({ role: 'system', content: langInstr });
+    // chapter-writing system prompt
     messages.push({ role: 'system', content: systemPrompt });
+
+    // Add prior chapters in alternating user/assistant messages
+    // For each chapter i < idx: push user message with outline, then assistant message with chapter text (if available)
+    for (let i = 0; i < idx; i++) {
+      const prev = outline[i];
+      if (!prev) continue;
+      const prevUser = `Chapter: ${prev.title}\nDescription: ${prev.description}`;
+      messages.push({ role: 'user', content: prevUser });
+      if (prev.chapterText) {
+        messages.push({ role: 'assistant', content: prev.chapterText });
+      }
+    }
+
+    // Finally request the current chapter (as a user message)
     messages.push({ role: 'user', content: userContent });
 
     const resp = await callOpenAI(apiKey, messages);
