@@ -1,4 +1,4 @@
-// filepath: /Users/hans-peter.stoerr/dev/ml/storyteller/src/app.js
+// filepath: /Users/hans-peter.stoerr/dev/ml/storyteller/docs/app.js
 // Store API key in localStorage for convenience
 // Note: localStorage is appropriate for this client-side-only app where the API key
 // is used directly from the browser to call OpenAI's API. The key never goes to our servers.

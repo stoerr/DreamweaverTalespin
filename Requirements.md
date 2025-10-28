@@ -25,4 +25,4 @@ And third, the chapters will be read aloud, one after each other, while the next
 - The OpenAI API key is stored in local storage at `chatgpt_api_key`. If that is not present, it is requested from the user by `prompt`. It should not be shown in the UI.
 - It's done serverless in HTML+CSS+JavaScript. 
 - We will use the OpenAI APIs. And bootstrap for formatting, imported from CDN.
-- For the development server the files are served from directory src/.
+- For the development server the files are served from directory docs/.
