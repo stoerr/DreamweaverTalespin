@@ -6,6 +6,8 @@
 const API_KEY_STORAGE = 'chatgpt_api_key';
 // Key from Requirements.md to store/restore the last story prompt
 const STORY_PROMPT_STORAGE = 'net.stoerr.aiexperiments.storyteller.storyprompt';
+// Store last selected voice
+const VOICE_STORAGE = 'net.stoerr.aiexperiments.storyteller.voice';
 
 // DOM elements
 const outlineSystemPromptInput = document.getElementById('outline-system-prompt');
@@ -48,6 +50,20 @@ function getApiKey() {
   return localStorage.getItem(API_KEY_STORAGE) || null;
 }
 
+// Update play button enabled/disabled state depending on generation/speaking
+function updatePlayButtonState() {
+  if (!playBtn) return;
+  // Disabled if currently generating or speech synthesis is speaking
+  playBtn.disabled = !!isGenerating || !!synth.speaking;
+}
+
+// Persist voice selection when user changes it
+if (voiceSelect) {
+  voiceSelect.addEventListener('change', () => {
+    try { localStorage.setItem(VOICE_STORAGE, voiceSelect.value || ''); } catch (e) {}
+  });
+}
+
 // Prompt for API key if not present; load default prompts; populate voices & languages
 window.addEventListener('DOMContentLoaded', async () => {
   let apiKey = getApiKey();
@@ -78,7 +94,6 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // Populate examples dropdown
   if (storyExamplesSelect) {
-    // clear existing (keep first placeholder if present)
     storyExamplesSelect.innerHTML = '';
     const placeholder = document.createElement('option');
     placeholder.value = '';
@@ -114,6 +129,9 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Populate voices and language selector
   populateVoicesAndLanguages();
   window.speechSynthesis.onvoiceschanged = populateVoicesAndLanguages;
+
+  // update play button state on load
+  updatePlayButtonState();
 });
 
 function populateVoicesAndLanguages() {
@@ -148,6 +166,9 @@ function populateVoicesAndLanguages() {
 function refreshVoiceSelect() {
   const voices = synth.getVoices();
   const lang = (languageSelect && languageSelect.value) || '';
+  // remember previous selection and stored selection
+  const prevSelection = voiceSelect ? voiceSelect.value : '';
+  const storedSelection = (function(){ try { return localStorage.getItem(VOICE_STORAGE) || ''; } catch(e){ return ''; } })();
   voiceSelect.innerHTML = '';
   const filtered = voices.filter(v => {
     if (!lang) return true; // any
@@ -183,9 +204,16 @@ function refreshVoiceSelect() {
     voiceSelect.appendChild(opt);
   });
 
-  // Select the top-scoring voice by default (if nothing selected)
-  if (voiceSelect.options.length && !voiceSelect.value) {
-    voiceSelect.selectedIndex = 0;
+  // Try to restore previous selection (current UI selection), then stored selection, otherwise select top
+  if (voiceSelect.options.length) {
+    if (prevSelection && Array.from(voiceSelect.options).some(o => o.value === prevSelection)) {
+      voiceSelect.value = prevSelection;
+    } else if (storedSelection && Array.from(voiceSelect.options).some(o => o.value === storedSelection)) {
+      voiceSelect.value = storedSelection;
+    } else {
+      voiceSelect.selectedIndex = 0;
+      try { localStorage.setItem(VOICE_STORAGE, voiceSelect.value || ''); } catch(e){}
+    }
   }
 }
 
@@ -343,6 +371,7 @@ generateNextBgBtn.addEventListener('click', async () => {
 async function generateChapter(idx, foreground = true) {
   if (isGenerating) return;
   isGenerating = true;
+  updatePlayButtonState();
   let apiKey = getApiKey();
   if (!apiKey) {
     const entered = prompt('OpenAI API key not found. Please enter it:');
@@ -350,6 +379,7 @@ async function generateChapter(idx, foreground = true) {
     apiKey = getApiKey();
     if (!apiKey) {
       isGenerating = false;
+      updatePlayButtonState();
       return;
     }
   }
@@ -357,6 +387,7 @@ async function generateChapter(idx, foreground = true) {
   const item = outline[idx];
   if (!item) {
     isGenerating = false;
+    updatePlayButtonState();
     return;
   }
 
@@ -364,7 +395,7 @@ async function generateChapter(idx, foreground = true) {
   if (!systemPrompt) systemPrompt = 'You are an assistant that expands a chapter description into a full chapter. Keep it vivid and engaging.';
   const userContent = `Chapter: ${item.title}\nDescription: ${item.description}`;
 
-  if (foreground) showMessageInChapterContainer('<div class="placeholder">Generating chapter…</div>');
+  if (foreground) showMessageInChapterContainer('<div class="d-flex align-items-center"><strong>Generating chapter…</strong><div class="spinner-border ms-3" role="status" aria-hidden="true"></div></div>');
 
   try {
     const langInstr = getLanguageInstruction();
@@ -385,12 +416,16 @@ async function generateChapter(idx, foreground = true) {
     throw err;
   } finally {
     isGenerating = false;
+    updatePlayButtonState();
   }
 }
 
 // Playback controls
 playBtn.addEventListener('click', async () => {
   if (!outline.length) return;
+
+  // disable play immediately while generation/prepare starts
+  playBtn.disabled = true;
 
   if (playingIndex === null) {
     if (selectedIndex !== null) playingIndex = selectedIndex;
@@ -403,6 +438,7 @@ playBtn.addEventListener('click', async () => {
     try {
       await generateChapter(playingIndex, true);
     } catch (e) {
+      updatePlayButtonState();
       return;
     }
   }
@@ -425,6 +461,7 @@ stopBtn.addEventListener('click', () => {
   synth.cancel();
   currentUtterance = null;
   playingIndex = null;
+  updatePlayButtonState();
 });
 
 function speakChapter(idx) {
@@ -443,9 +480,15 @@ function speakChapter(idx) {
   const v = voices.find(x => x.name === selectedVoiceName);
   if (v) utter.voice = v;
 
+  // when speaking starts, update UI state
+  utter.onstart = () => {
+    updatePlayButtonState();
+  };
+
   utter.onend = () => {
     // when a chapter finishes, automatically play next (if exists)
     playingIndex = idx + 1;
+    updatePlayButtonState();
     if (playingIndex < outline.length) {
       // only autoplay if enabled
       if (autoplayCheckbox && !autoplayCheckbox.checked) {
@@ -470,6 +513,7 @@ function speakChapter(idx) {
   utter.onerror = (e) => console.error('Speech error', e);
 
   currentUtterance = utter;
+  updatePlayButtonState();
   synth.speak(utter);
 }
 
