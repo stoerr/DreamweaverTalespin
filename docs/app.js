@@ -154,7 +154,8 @@ function setupTextareaAutoResize() {
 function populateVoicesAndLanguages() {
   const voices = synth.getVoices();
   // Build languages set from voice.lang (prefix before '-')
-  const langs = Array.from(new Set(voices.map(v => (v.lang || 'unknown').split('-')[0]))).filter(Boolean).sort();
+  // const langs = Array.from(new Set(voices.map(v => (v.lang || 'unknown').split('-')[0]))).filter(Boolean).sort();
+  const langs = ['en', 'de', 'es', 'fr'];
 
   // Populate languageSelect if present
   if (languageSelect) {
