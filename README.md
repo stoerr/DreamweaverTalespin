@@ -21,7 +21,8 @@ This repository is intentionally serverless for the application itself — the s
 - `docs/style.css` - Styling
 - `docs/app.js` - Main JavaScript (outline + chapter generation, TTS, voice/language handling, localStorage, OpenAI calls)
 - `dev-server.js` - Development server with no-cache headers
-- `prompts/outline.md` and `prompts/chapter.md` - Default system prompts that `docs/app.js` will load on startup
+- `docs/prompts/outline.md` and `docs/prompts/chapter.md` - Default system prompts that `docs/app.js` will load on startup
+- `docs/prompts/storyprompt-examples.json` - Optional JSON array of example story prompts used to populate the Examples dropdown in the UI
 
 ## Development Server
 ### Prerequisites

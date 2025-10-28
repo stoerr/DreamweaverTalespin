@@ -25,14 +25,8 @@ const languageSelect = document.getElementById('language-select');
 const autoplayCheckbox = document.getElementById('autoplay');
 const storyExamplesSelect = document.getElementById('story-examples');
 
-// Example story prompts shown in the examples dropdown
-const STORY_PROMPTS_EXAMPLES = [
-  "A curious child discovers a hidden city beneath the ocean",
-  "An inventor travels back in time to fix a mistake but creates unexpected consequences",
-  "A small village learns its guardian is a forgotten robot",
-  "A lonely librarian finds books that come to life at midnight",
-  "Two rival space crews must cooperate to survive an unknown signal"
-];
+// This array will be replaced with contents of ./prompts/storyprompt-examples.json if available
+let loadedExamples = [];
 
 let outline = []; // {title, description, chapterText (optional)}
 let selectedIndex = null;
@@ -73,12 +67,14 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // Load default system prompts from files
   try {
-    const [outlineTxt, chapterTxt] = await Promise.all([
+    const [outlineTxt, chapterTxt, examplesJson] = await Promise.all([
       fetch('./prompts/outline.md').then(r => r.ok ? r.text() : '' ).catch(() => ''),
       fetch('./prompts/chapter.md').then(r => r.ok ? r.text() : '' ).catch(() => ''),
+      fetch('./prompts/storyprompt-examples.json').then(r => r.ok ? r.json() : [] ).catch(() => []),
     ]);
     if (outlineTxt) outlineSystemPromptInput.value = outlineTxt.trim();
     if (chapterTxt) chapterSystemPromptInput.value = chapterTxt.trim();
+    if (examplesJson && Array.isArray(examplesJson)) loadedExamples = examplesJson;
   } catch (e) {
     console.warn('Could not load prompt files:', e);
   }
@@ -98,7 +94,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     placeholder.value = '';
     placeholder.textContent = '(Select an example to fill the story prompt)';
     storyExamplesSelect.appendChild(placeholder);
-    STORY_PROMPTS_EXAMPLES.forEach(s => {
+    loadedExamples.forEach(s => {
       const opt = document.createElement('option');
       opt.value = s;
       opt.textContent = s;
