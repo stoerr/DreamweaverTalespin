@@ -13,6 +13,7 @@ And third, the chapters will be read aloud, one after each other, while the next
 - There are input fields for system prompts for the outline generation and for the chapter generation.
 - The text of each chapter will be displayed and there is a play button for reading that chapter aloud. It is highlighted while being read.
 - There is an autoplay switch, which will automatically read the next chapter when the current one is finished. That is enabled by default.
+- There should be a language selector that influences both the story generation and the text-to-speech voice. (The voice names e.g. contain `en-` for english, `de-` for German, etc. - only the voices matching those have to be shown in the selector.)
 
 ## Some technical details
 
