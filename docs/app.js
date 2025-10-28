@@ -74,8 +74,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   // Load default system prompts from files
   try {
     const [outlineTxt, chapterTxt] = await Promise.all([
-      fetch('/prompts/outline.md').then(r => r.ok ? r.text() : '' ).catch(() => ''),
-      fetch('/prompts/chapter.md').then(r => r.ok ? r.text() : '' ).catch(() => ''),
+      fetch('./prompts/outline.md').then(r => r.ok ? r.text() : '' ).catch(() => ''),
+      fetch('./prompts/chapter.md').then(r => r.ok ? r.text() : '' ).catch(() => ''),
     ]);
     if (outlineTxt) outlineSystemPromptInput.value = outlineTxt.trim();
     if (chapterTxt) chapterSystemPromptInput.value = chapterTxt.trim();
