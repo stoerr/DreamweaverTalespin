@@ -188,11 +188,16 @@ function refreshVoiceSelect() {
   const prevSelection = voiceSelect ? voiceSelect.value : '';
   const storedSelection = (function(){ try { return localStorage.getItem(VOICE_STORAGE) || ''; } catch(e){ return ''; } })();
   voiceSelect.innerHTML = '';
+
+  // Filter voices by language - more robust filtering for mobile
   const filtered = voices.filter(v => {
     if (!lang) return true; // any
-    const p = (v.lang || '').split('-')[0];
-    return p === lang;
+    const voiceLang = (v.lang || '').toLowerCase();
+    const langPrefix = voiceLang.split('-')[0];
+    const langLower = lang.toLowerCase();
+    return langPrefix === langLower || voiceLang === langLower || voiceLang.startsWith(langLower + '-');
   });
+
   // If no voices match the language, fall back to all voices
   const toShow = filtered.length ? filtered : voices;
 
@@ -206,8 +211,8 @@ function refreshVoiceSelect() {
     if (name.includes('microsoft') || name.includes('azure')) score += 40;
     // prefer exact language match
     if (languageSelect && languageSelect.value) {
-      const p = (v.lang || '').split('-')[0];
-      if (p === languageSelect.value) score += 20;
+      const p = (v.lang || '').toLowerCase().split('-')[0];
+      if (p === languageSelect.value.toLowerCase()) score += 20;
     }
     // shorter, clean names slightly preferred
     score += Math.max(0, 10 - (v.name || '').length * 0.1);
@@ -502,8 +507,31 @@ function speakChapter(idx) {
   const utter = new SpeechSynthesisUtterance(item.chapterText);
   const selectedVoiceName = voiceSelect.value;
   const voices = synth.getVoices();
-  const v = voices.find(x => x.name === selectedVoiceName);
-  if (v) utter.voice = v;
+
+  // Try multiple methods to find the voice for better mobile compatibility
+  let v = voices.find(x => x.name === selectedVoiceName);
+
+  // Fallback 1: Try case-insensitive match
+  if (!v) {
+    v = voices.find(x => x.name.toLowerCase() === selectedVoiceName.toLowerCase());
+  }
+
+  // Fallback 2: Try matching by voiceURI
+  if (!v) {
+    v = voices.find(x => x.voiceURI === selectedVoiceName);
+  }
+
+  // Fallback 3: Try partial match
+  if (!v) {
+    v = voices.find(x => x.name.includes(selectedVoiceName) || selectedVoiceName.includes(x.name));
+  }
+
+  if (v) {
+    utter.voice = v;
+    console.log(`Using voice: ${v.name} (${v.lang})`);
+  } else {
+    console.warn(`Could not find voice "${selectedVoiceName}", using browser default`);
+  }
 
   // when speaking starts, update UI state
   utter.onstart = () => {

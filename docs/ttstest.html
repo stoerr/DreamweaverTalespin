@@ -206,6 +206,26 @@
 
       log(`Populating ${voices.length} voices`);
       
+      // Log 3 random voices for diagnostics
+      if (voices.length > 0) {
+        log('\n=== Sample Voice Details (3 random) ===');
+        const samples = [];
+        for (let i = 0; i < Math.min(3, voices.length); i++) {
+          const idx = Math.floor(Math.random() * voices.length);
+          if (!samples.includes(idx)) {
+            samples.push(idx);
+            const v = voices[idx];
+            log(`Voice ${i + 1}:`);
+            log(`  name: "${v.name}"`);
+            log(`  lang: "${v.lang}"`);
+            log(`  localService: ${v.localService}`);
+            log(`  default: ${v.default}`);
+            log(`  voiceURI: "${v.voiceURI}"`);
+          }
+        }
+        log('=== End Sample Voices ===\n');
+      }
+
       // Build languages list - using common languages like app.js
       const langs = ['en', 'de', 'es', 'fr'];
       
@@ -243,18 +263,30 @@
       
       voiceSelect.innerHTML = '';
       
-      // Filter voices by language
+      log(`Filtering voices for language: "${lang || 'any'}"`);
+
+      // Filter voices by language - more robust filtering for mobile
       const filtered = voices.filter(v => {
         if (!lang) return true;
-        const p = (v.lang || '').split('-')[0];
-        return p === lang;
+        const voiceLang = (v.lang || '').toLowerCase();
+        const langPrefix = voiceLang.split('-')[0];
+        const langLower = lang.toLowerCase();
+        const match = langPrefix === langLower || voiceLang === langLower || voiceLang.startsWith(langLower + '-');
+        if (match) {
+          log(`  Matched voice: ${v.name} with lang "${v.lang}"`);
+        }
+        return match;
       });
       
       // Fall back to all voices if none match
       const toShow = filtered.length ? filtered : voices;
       
-      log(`Showing ${toShow.length} voices for language: ${lang || 'any'}`);
-      
+      if (filtered.length === 0 && lang) {
+        log(`WARNING: No voices matched language "${lang}", showing all ${voices.length} voices`);
+      } else {
+        log(`Showing ${toShow.length} voices for language: ${lang || 'any'}`);
+      }
+
       // Sort voices by quality (same heuristic as app.js)
       function voiceQualityScore(v) {
         let score = 0;
@@ -263,8 +295,8 @@
         if (name.includes('google') || name.includes('neural') || name.includes('premium') || name.includes('high')) score += 50;
         if (name.includes('microsoft') || name.includes('azure')) score += 40;
         if (languageSelect.value) {
-          const p = (v.lang || '').split('-')[0];
-          if (p === languageSelect.value) score += 20;
+          const p = (v.lang || '').toLowerCase().split('-')[0];
+          if (p === languageSelect.value.toLowerCase()) score += 20;
         }
         score += Math.max(0, 10 - (v.name || '').length * 0.1);
         return score;
@@ -315,16 +347,50 @@
         // Create utterance
         const utter = new SpeechSynthesisUtterance(text);
         
-        // Set selected voice
+        // Set selected voice - try multiple methods for mobile compatibility
         const selectedVoiceName = voiceSelect.value;
         const voices = synth.getVoices();
-        const voice = voices.find(v => v.name === selectedVoiceName);
-        
+
+        log(`Looking for voice: "${selectedVoiceName}"`);
+        log(`Available voices count: ${voices.length}`);
+
+        // Try to find voice by name (primary method)
+        let voice = voices.find(v => v.name === selectedVoiceName);
+
+        // Fallback 1: Try case-insensitive match
+        if (!voice) {
+          log(`Exact match failed, trying case-insensitive match...`);
+          voice = voices.find(v => v.name.toLowerCase() === selectedVoiceName.toLowerCase());
+        }
+
+        // Fallback 2: Try matching by voiceURI
+        if (!voice) {
+          log(`Case-insensitive match failed, trying voiceURI match...`);
+          voice = voices.find(v => v.voiceURI === selectedVoiceName);
+        }
+
+        // Fallback 3: Try partial match
+        if (!voice) {
+          log(`VoiceURI match failed, trying partial match...`);
+          voice = voices.find(v => v.name.includes(selectedVoiceName) || selectedVoiceName.includes(v.name));
+        }
+
         if (voice) {
           utter.voice = voice;
-          log(`Using voice: ${voice.name} (${voice.lang})`);
+          log(`✓ Using voice: ${voice.name} (${voice.lang})`);
+          log(`  voiceURI: ${voice.voiceURI}`);
+          log(`  localService: ${voice.localService}`);
+          log(`  default: ${voice.default}`);
         } else {
-          log(`WARNING: Could not find selected voice, using default`);
+          log(`WARNING: Could not find selected voice "${selectedVoiceName}", using browser default`);
+          log(`This may explain why the same voice is always used on mobile!`);
+        }
+
+        // Additional check: verify the voice was actually set
+        if (utter.voice) {
+          log(`Utterance voice property set to: ${utter.voice.name}`);
+        } else {
+          log(`WARNING: Utterance voice property is null/undefined`);
         }
         
         // Event handlers
