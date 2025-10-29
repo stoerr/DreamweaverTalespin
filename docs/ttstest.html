@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Text-to-Speech Test</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      padding: 20px;
+      max-width: 900px;
+      margin: 0 auto;
+      background-color: #f5f5f5;
+    }
+    h1 {
+      color: #333;
+      margin-bottom: 10px;
+      font-size: 2em;
+    }
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+      font-size: 1em;
+    }
+    .card {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: 600;
+      color: #333;
+    }
+    select, textarea, button {
+      width: 100%;
+      padding: 10px;
+      margin-bottom: 15px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+      font-family: inherit;
+    }
+    textarea {
+      resize: vertical;
+      min-height: 100px;
+    }
+    textarea#output {
+      background-color: #f9f9f9;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+    }
+    button {
+      background-color: #007bff;
+      color: white;
+      border: none;
+      cursor: pointer;
+      font-weight: 600;
+      transition: background-color 0.2s;
+    }
+    button:hover {
+      background-color: #0056b3;
+    }
+    button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+    .help-text {
+      font-size: 12px;
+      color: #666;
+      margin-top: -10px;
+      margin-bottom: 15px;
+    }
+    .status {
+      padding: 10px;
+      border-radius: 4px;
+      margin-bottom: 15px;
+    }
+    .status.info {
+      background-color: #d1ecf1;
+      color: #0c5460;
+      border: 1px solid #bee5eb;
+    }
+    .status.error {
+      background-color: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+    .status.success {
+      background-color: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+  </style>
+</head>
+<body>
+  <h1>Text-to-Speech Test</h1>
+  <p class="subtitle">Test the browser's speech synthesis to diagnose TTS issues</p>
+
+  <div class="card">
+    <label for="language-select">Language</label>
+    <select id="language-select"></select>
+    <div class="help-text">Select a language to filter available voices</div>
+
+    <label for="voice-select">Voice</label>
+    <select id="voice-select"></select>
+    <div class="help-text">Voices are sorted by quality (best first)</div>
+  </div>
+
+  <div class="card">
+    <label for="text-input">Text to Speak</label>
+    <textarea id="text-input" rows="6" placeholder="Enter text to speak...">Hello! This is a test of the text-to-speech system. If you can hear this message, then the speech synthesis is working correctly on your device.</textarea>
+    <button id="speak-btn">Speak</button>
+    <button id="stop-btn">Stop</button>
+  </div>
+
+  <div class="card">
+    <label for="output">Output / Error Messages</label>
+    <textarea id="output" rows="10" readonly placeholder="Messages and errors will appear here..."></textarea>
+  </div>
+
+  <script>
+    // Main application logic
+    const languageSelect = document.getElementById('language-select');
+    const voiceSelect = document.getElementById('voice-select');
+    const textInput = document.getElementById('text-input');
+    const speakBtn = document.getElementById('speak-btn');
+    const stopBtn = document.getElementById('stop-btn');
+    const output = document.getElementById('output');
+
+    const synth = window.speechSynthesis;
+    let currentUtterance = null;
+
+    // Logging function
+    function log(message, type = 'info') {
+      const timestamp = new Date().toLocaleTimeString();
+      const logLine = `[${timestamp}] ${message}\n`;
+      output.value += logLine;
+      output.scrollTop = output.scrollHeight;
+      console.log(message);
+    }
+
+    function logError(message, error) {
+      const timestamp = new Date().toLocaleTimeString();
+      let logLine = `[${timestamp}] ERROR: ${message}\n`;
+      if (error) {
+        logLine += `  Details: ${error.toString()}\n`;
+        if (error.stack) {
+          logLine += `  Stack: ${error.stack}\n`;
+        }
+      }
+      output.value += logLine;
+      output.scrollTop = output.scrollHeight;
+      console.error(message, error);
+    }
+
+    // Initialize on load
+    window.addEventListener('DOMContentLoaded', () => {
+      log('Page loaded, initializing...');
+      
+      // Check if speech synthesis is available
+      if (!window.speechSynthesis) {
+        logError('Speech synthesis not supported in this browser!');
+        speakBtn.disabled = true;
+        return;
+      }
+      log('Speech synthesis API is available');
+
+      // Populate voices
+      populateVoicesAndLanguages();
+      
+      // Some browsers need this event to get voices
+      if (synth.onvoiceschanged !== undefined) {
+        synth.onvoiceschanged = () => {
+          log('Voices changed event fired');
+          populateVoicesAndLanguages();
+        };
+      }
+
+      // Log initial state
+      setTimeout(() => {
+        const voices = synth.getVoices();
+        log(`Found ${voices.length} total voices`);
+        if (voices.length === 0) {
+          log('WARNING: No voices loaded yet. This may take a moment...');
+        }
+      }, 100);
+    });
+
+    // Populate voices and languages (same logic as app.js)
+    function populateVoicesAndLanguages() {
+      const voices = synth.getVoices();
+      
+      if (voices.length === 0) {
+        log('No voices available yet, will retry when voices load');
+        return;
+      }
+
+      log(`Populating ${voices.length} voices`);
+      
+      // Build languages list - using common languages like app.js
+      const langs = ['en', 'de', 'es', 'fr'];
+      
+      // Populate language select
+      const prevLang = languageSelect.value;
+      languageSelect.innerHTML = '';
+      
+      const anyOpt = document.createElement('option');
+      anyOpt.value = '';
+      anyOpt.textContent = 'Any';
+      languageSelect.appendChild(anyOpt);
+      
+      langs.forEach(l => {
+        const opt = document.createElement('option');
+        opt.value = l;
+        opt.textContent = l.toUpperCase();
+        languageSelect.appendChild(opt);
+      });
+      
+      // Restore or default to English
+      if (prevLang) {
+        languageSelect.value = prevLang;
+      } else if (langs.includes('en')) {
+        languageSelect.value = 'en';
+      }
+      
+      // Populate voice select
+      refreshVoiceSelect();
+    }
+
+    function refreshVoiceSelect() {
+      const voices = synth.getVoices();
+      const lang = languageSelect.value || '';
+      const prevSelection = voiceSelect.value;
+      
+      voiceSelect.innerHTML = '';
+      
+      // Filter voices by language
+      const filtered = voices.filter(v => {
+        if (!lang) return true;
+        const p = (v.lang || '').split('-')[0];
+        return p === lang;
+      });
+      
+      // Fall back to all voices if none match
+      const toShow = filtered.length ? filtered : voices;
+      
+      log(`Showing ${toShow.length} voices for language: ${lang || 'any'}`);
+      
+      // Sort voices by quality (same heuristic as app.js)
+      function voiceQualityScore(v) {
+        let score = 0;
+        if (v.default) score += 100;
+        const name = (v.name || '').toLowerCase();
+        if (name.includes('google') || name.includes('neural') || name.includes('premium') || name.includes('high')) score += 50;
+        if (name.includes('microsoft') || name.includes('azure')) score += 40;
+        if (languageSelect.value) {
+          const p = (v.lang || '').split('-')[0];
+          if (p === languageSelect.value) score += 20;
+        }
+        score += Math.max(0, 10 - (v.name || '').length * 0.1);
+        return score;
+      }
+      
+      toShow.sort((a, b) => voiceQualityScore(b) - voiceQualityScore(a));
+      
+      toShow.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v.name;
+        opt.textContent = `${v.name} (${v.lang})${v.default ? ' — default' : ''}`;
+        voiceSelect.appendChild(opt);
+      });
+      
+      // Restore previous selection if possible
+      if (voiceSelect.options.length) {
+        if (prevSelection && Array.from(voiceSelect.options).some(o => o.value === prevSelection)) {
+          voiceSelect.value = prevSelection;
+        } else {
+          voiceSelect.selectedIndex = 0;
+        }
+        log(`Selected voice: ${voiceSelect.options[voiceSelect.selectedIndex].textContent}`);
+      }
+    }
+
+    // Update voice list when language changes
+    languageSelect.addEventListener('change', () => {
+      log(`Language changed to: ${languageSelect.value || 'any'}`);
+      refreshVoiceSelect();
+    });
+
+    // Speak button handler
+    speakBtn.addEventListener('click', () => {
+      const text = textInput.value.trim();
+      
+      if (!text) {
+        logError('No text to speak!');
+        return;
+      }
+      
+      log(`Starting speech synthesis...`);
+      log(`Text length: ${text.length} characters`);
+      
+      try {
+        // Cancel any current speech
+        synth.cancel();
+        
+        // Create utterance
+        const utter = new SpeechSynthesisUtterance(text);
+        
+        // Set selected voice
+        const selectedVoiceName = voiceSelect.value;
+        const voices = synth.getVoices();
+        const voice = voices.find(v => v.name === selectedVoiceName);
+        
+        if (voice) {
+          utter.voice = voice;
+          log(`Using voice: ${voice.name} (${voice.lang})`);
+        } else {
+          log(`WARNING: Could not find selected voice, using default`);
+        }
+        
+        // Event handlers
+        utter.onstart = () => {
+          log('Speech started');
+          speakBtn.disabled = true;
+        };
+        
+        utter.onend = () => {
+          log('Speech ended normally');
+          speakBtn.disabled = false;
+          currentUtterance = null;
+        };
+        
+        utter.onerror = (event) => {
+          logError(`Speech error occurred: ${event.error}`, event);
+          if (event.error) {
+            log(`Error type: ${event.error}`);
+          }
+          if (event.charIndex !== undefined) {
+            log(`Error at character index: ${event.charIndex}`);
+          }
+          speakBtn.disabled = false;
+          currentUtterance = null;
+        };
+        
+        utter.onpause = () => {
+          log('Speech paused');
+        };
+        
+        utter.onresume = () => {
+          log('Speech resumed');
+        };
+        
+        utter.onboundary = (event) => {
+          // Log word boundaries for debugging
+          if (event.name === 'word') {
+            log(`Speaking word at character ${event.charIndex}`);
+          }
+        };
+        
+        currentUtterance = utter;
+        
+        // Start speaking
+        log('Calling speechSynthesis.speak()...');
+        synth.speak(utter);
+        
+        // Check if it actually started
+        setTimeout(() => {
+          if (synth.speaking) {
+            log('Confirmed: synthesis is speaking');
+          } else if (synth.pending) {
+            log('Synthesis is pending');
+          } else {
+            logError('WARNING: Synthesis does not appear to be speaking or pending');
+          }
+        }, 100);
+        
+      } catch (error) {
+        logError('Exception while trying to speak', error);
+        speakBtn.disabled = false;
+      }
+    });
+
+    // Stop button handler
+    stopBtn.addEventListener('click', () => {
+      log('Stop button clicked');
+      try {
+        synth.cancel();
+        currentUtterance = null;
+        speakBtn.disabled = false;
+        log('Speech synthesis cancelled');
+      } catch (error) {
+        logError('Error stopping speech', error);
+      }
+    });
+
+    // Log browser and platform info
+    window.addEventListener('load', () => {
+      log('=== Browser Information ===');
+      log(`User Agent: ${navigator.userAgent}`);
+      log(`Platform: ${navigator.platform}`);
+      log(`Language: ${navigator.language}`);
+      log(`Online: ${navigator.onLine}`);
+      
+      // Check for common mobile browsers
+      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      log(`Mobile device: ${isMobile}`);
+      
+      if (isMobile) {
+        log('NOTE: Mobile browsers may have restrictions on TTS');
+        log('      - May require user interaction first');
+        log('      - Some browsers mute TTS in background tabs');
+        log('      - iOS Safari has specific TTS limitations');
+      }
+      
+      log('=== Speech Synthesis Status ===');
+      log(`Speaking: ${synth.speaking}`);
+      log(`Pending: ${synth.pending}`);
+      log(`Paused: ${synth.paused}`);
+      
+      // Test voices in detail
+      const voices = synth.getVoices();
+      log(`\n=== Available Voices (${voices.length}) ===`);
+      voices.forEach((v, idx) => {
+        log(`${idx + 1}. ${v.name} (${v.lang}) - default: ${v.default}, local: ${v.localService}`);
+      });
+      
+      log('\n=== Ready to test ===');
+      log('Enter text above and click "Speak" to test TTS');
+    });
+  </script>
+</body>
+</html>
