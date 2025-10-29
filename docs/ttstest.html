@@ -100,7 +100,6 @@
     <textarea id="text-input" rows="6" placeholder="Enter text to speak...">Hello! This is a test of the text-to-speech system. If you can hear this message, then the speech synthesis is working correctly on your device.</textarea>
     <button id="speak-btn">Speak</button>
     <button id="stop-btn">Stop</button>
-    <button id="testall-btn">Test All Voices</button>
   </div>
 
   <div class="card">
@@ -444,74 +443,6 @@
         logError('Exception while trying to speak', error);
         speakBtn.disabled = false;
       }
-    });
-
-    // Test All Voices handler (diagnostic) - user gesture required
-    const testAllBtn = document.getElementById('testall-btn');
-    testAllBtn.addEventListener('click', async () => {
-      const voices = synth.getVoices();
-      if (!voices || voices.length === 0) {
-        logError('No voices available to test');
-        return;
-      }
-
-      log(`Starting diagnostic: testing ${voices.length} voices (may be blocked by mobile browser after the first utterance)`);
-      testAllBtn.disabled = true;
-      speakBtn.disabled = true;
-
-      for (let i = 0; i < voices.length; i++) {
-        const v = voices[i];
-        const sample = `Testing voice ${i + 1} ${v.name}`;
-        log(`Attempting voice ${i + 1}/${voices.length}: ${v.name} (${v.lang}) voiceURI: ${v.voiceURI}`);
-        try {
-          // Cancel any previous speech then try to speak with this voice
-          synth.cancel();
-          const u = new SpeechSynthesisUtterance(sample);
-          u.voice = v;
-          try { if (v.lang) u.lang = v.lang; } catch (e) {}
-
-          let finished = false;
-          const waitForFinish = new Promise(resolve => {
-            const t = setTimeout(() => {
-              if (!finished) {
-                log(`Timeout waiting for voice ${v.name} to finish (browser may have blocked it)`);
-                finished = true;
-                resolve();
-              }
-            }, 2500);
-
-            u.onend = () => {
-              if (!finished) {
-                finished = true;
-                clearTimeout(t);
-                log(`Completed: ${v.name}`);
-                resolve();
-              }
-            };
-
-            u.onerror = (ev) => {
-              if (!finished) {
-                finished = true;
-                clearTimeout(t);
-                logError(`Error while speaking with ${v.name}`, ev);
-                resolve();
-              }
-            };
-          });
-
-          synth.speak(u);
-          await waitForFinish;
-        } catch (err) {
-          logError(`Exception testing voice ${v.name}`, err);
-        }
-
-        // brief pause between attempts
-        await new Promise(r => setTimeout(r, 300));
-      }
-
-      log('Diagnostic complete');
-      testAllBtn.disabled = false;
-      speakBtn.disabled = false;
     });
 
     // Stop button handler
