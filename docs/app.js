@@ -255,14 +255,9 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-function getLanguageInstruction() {
+function getLanguageCode() {
   if (!languageSelect) return null;
-  const code = languageSelect.value;
-  if (!code) return null;
-  // crude mapping for display name
-  const map = { en: 'English', de: 'German', fr: 'French', es: 'Spanish' };
-  const name = map[code] || code;
-  return `Respond in ${name} (${code}).`;
+  return languageSelect.value || null;
 }
 
 // Outline generation
@@ -298,15 +293,8 @@ async function generateOutline(foreground = true) {
   if (foreground) showMessageInChapterContainer('<div class="d-flex align-items-center"><strong>Generating outline…</strong><div class="spinner-border ms-3" role="status" aria-hidden="true"></div></div>');
 
   try {
-    const langInstr = getLanguageInstruction();
-    const messages = [];
-    if (langInstr) messages.push({ role: 'system', content: langInstr });
-    messages.push({ role: 'system', content: systemPrompt });
-    messages.push({ role: 'user', content: storyPrompt });
-
-    const text = await callOpenAI(apiKey, messages);
-
-    outline = parseOutline(text);
+    const languageCode = getLanguageCode();
+    outline = await window.StoryGenerator.generateOutline(apiKey, storyPrompt, systemPrompt, languageCode);
     renderOutline();
     if (foreground) showMessageInChapterContainer('<div class="placeholder">Outline generated. Select a chapter to generate it.</div>');
     return outline;
@@ -329,28 +317,6 @@ generateOutlineBtn.addEventListener('click', async () => {
     // already shown by generateOutline
   }
 });
-
-function parseOutline(text) {
-  // Expect lines like "1. Title - description" or "1) Title - description"
-  const lines = (text || '').split('\n').map(l => l.trim()).filter(l => l);
-  const entries = [];
-  for (const line of lines) {
-    // Remove leading numbering like "1." or "1)"
-    const m = line.match(/^\s*(\d+)\s*[.)]?\s*(.*)$/);
-    let rest = line;
-    if (m) rest = m[2];
-    // Split title and description by ' - ' or ' — ' or ':'
-    let title = rest;
-    let description = '';
-    const sepMatch = rest.match(/^(.*?)\s*[-—:|]\s*(.*)$/);
-    if (sepMatch) {
-      title = sepMatch[1].trim();
-      description = sepMatch[2].trim();
-    }
-    entries.push({ title, description, chapterText: null });
-  }
-  return entries;
-}
 
 function renderOutline() {
   outlineList.innerHTML = '';
@@ -435,35 +401,23 @@ async function generateChapter(idx, foreground = true) {
 
   let systemPrompt = (chapterSystemPromptInput.value || '').trim();
   if (!systemPrompt) systemPrompt = 'You are an assistant that expands a chapter description into a full chapter. Keep it vivid and engaging.';
-  const userContent = `Chapter: ${item.title}\nDescription: ${item.description}`;
 
   if (foreground) showMessageInChapterContainer('<div class="d-flex align-items-center"><strong>Generating chapter…</strong><div class="spinner-border ms-3" role="status" aria-hidden="true"></div></div>');
 
   try {
-    const langInstr = getLanguageInstruction();
-    const messages = [];
-    if (langInstr) messages.push({ role: 'system', content: langInstr });
-    // chapter-writing system prompt
-    messages.push({ role: 'system', content: systemPrompt });
+    const languageCode = getLanguageCode();
+    // Get prior chapters (all chapters before the current index)
+    const priorChapters = outline.slice(0, idx);
+    
+    const resp = await window.StoryGenerator.generateChapter(
+      apiKey,
+      item,
+      systemPrompt,
+      priorChapters,
+      languageCode
+    );
 
-    // Add prior chapters in alternating user/assistant messages
-    // For each chapter i < idx: push user message with outline, then assistant message with chapter text (if available)
-    for (let i = 0; i < idx; i++) {
-      const prev = outline[i];
-      if (!prev) continue;
-      const prevUser = `Chapter: ${prev.title}\nDescription: ${prev.description}`;
-      messages.push({ role: 'user', content: prevUser });
-      if (prev.chapterText) {
-        messages.push({ role: 'assistant', content: prev.chapterText });
-      }
-    }
-
-    // Finally request the current chapter (as a user message)
-    messages.push({ role: 'user', content: userContent });
-
-    const resp = await callOpenAI(apiKey, messages);
-
-    item.chapterText = (resp || '').trim();
+    item.chapterText = resp;
 
     if (selectedIndex === idx) selectOutlineIndex(idx);
     return resp;
@@ -586,45 +540,4 @@ function speakChapter(idx) {
   currentUtterance = utter;
   updatePlayButtonState();
   synth.speak(utter);
-}
-
-// OpenAI helper (simple fetch to chat completions)
-async function callOpenAI(apiKey, messages, opts = {}) {
-  const body = {
-    model: opts.model || 'gpt-4o',
-    messages: messages,
-    temperature: opts.temperature ?? 1,
-    max_completion_tokens: typeof opts.max_tokens === 'number' ? opts.max_tokens : 1024,
-    // top_p: opts.top_p,
-    // frequency_penalty: opts.frequency_penalty,
-    // presence_penalty: opts.presence_penalty,
-    // n: 1,
-    // stream: false,
-    // stop: null,
-  };
-
-  const resp = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!resp.ok) {
-    const text = await resp.text();
-    let msg = `Error ${resp.status}`;
-    try {
-      const json = JSON.parse(text);
-      msg = json.error?.message || msg;
-    } catch {}
-    throw new Error(msg);
-  }
-
-  const json = await resp.json();
-  const content = json.choices?.[0]?.message?.content;
-  if (typeof content !== 'string') throw new Error('Invalid response from OpenAI');
-
-  return content;
 }
