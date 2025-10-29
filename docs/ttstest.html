@@ -100,6 +100,7 @@
     <textarea id="text-input" rows="6" placeholder="Enter text to speak...">Hello! This is a test of the text-to-speech system. If you can hear this message, then the speech synthesis is working correctly on your device.</textarea>
     <button id="speak-btn">Speak</button>
     <button id="stop-btn">Stop</button>
+    <button id="testall-btn">Test All Voices</button>
   </div>
 
   <div class="card">
@@ -272,10 +273,13 @@
         let score = 0;
         if (v.default) score += 100;
         const name = (v.name || '').toLowerCase();
+        // Prefer native/local voices where possible (more likely to be honored on mobile)
+        if (v.localService) score += 30;
         if (name.includes('google') || name.includes('neural') || name.includes('premium') || name.includes('high')) score += 50;
         if (name.includes('microsoft') || name.includes('azure')) score += 40;
         if (languageSelect.value) {
-          const p = (v.lang || '').toLowerCase().split('-|_')[0];
+          // fix: split lang on - or _ correctly
+          const p = (v.lang || '').toLowerCase().split(/[-_]/)[0];
           if (p === languageSelect.value.toLowerCase()) score += 20;
         }
         score += Math.max(0, 10 - (v.name || '').length * 0.1);
@@ -286,7 +290,8 @@
       
       toShow.forEach(v => {
         const opt = document.createElement('option');
-        opt.value = v.name;
+        // Use the voiceURI as the option value to uniquely identify voices across browsers
+        opt.value = v.voiceURI || v.name;
         opt.textContent = `${v.name} (${v.lang})${v.default ? ' — default' : ''}`;
         voiceSelect.appendChild(opt);
       });
@@ -335,28 +340,34 @@
         log(`Available voices count: ${voices.length}`);
 
         // Try to find voice by name (primary method)
-        let voice = voices.find(v => v.name === selectedVoiceName);
+        // We store the option.value as voiceURI where possible, so try voiceURI first
+        let voice = voices.find(v => v.voiceURI === selectedVoiceName);
 
-        // Fallback 1: Try case-insensitive match
+        // Fallback 1: Try case-insensitive match on voiceURI
         if (!voice) {
-          log(`Exact match failed, trying case-insensitive match...`);
-          voice = voices.find(v => v.name.toLowerCase() === selectedVoiceName.toLowerCase());
+          voice = voices.find(v => (v.voiceURI || '').toLowerCase() === selectedVoiceName.toLowerCase());
         }
 
-        // Fallback 2: Try matching by voiceURI
+        // Fallback 2: Try exact name match
         if (!voice) {
-          log(`Case-insensitive match failed, trying voiceURI match...`);
-          voice = voices.find(v => v.voiceURI === selectedVoiceName);
+          log(`voiceURI match failed, trying case-insensitive name match...`);
+          voice = voices.find(v => (v.name || '').toLowerCase() === selectedVoiceName.toLowerCase());
         }
 
-        // Fallback 3: Try partial match
+        // Fallback 3: Try partial name match
         if (!voice) {
-          log(`VoiceURI match failed, trying partial match...`);
-          voice = voices.find(v => v.name.includes(selectedVoiceName) || selectedVoiceName.includes(v.name));
+          log(`Name match failed, trying partial match...`);
+          voice = voices.find(v => (v.name || '').includes(selectedVoiceName) || (selectedVoiceName || '').includes(v.name || ''));
         }
 
         if (voice) {
           utter.voice = voice;
+          // Also set utter.lang to the voice's language to increase chance the browser honors the selection
+          try {
+            if (voice.lang) utter.lang = voice.lang;
+          } catch (e) {
+            // ignore if browser disallows setting lang
+          }
           log(`✓ Using voice: ${voice.name} (${voice.lang})`);
           log(`  voiceURI: ${voice.voiceURI}`);
           log(`  localService: ${voice.localService}`);
@@ -433,6 +444,74 @@
         logError('Exception while trying to speak', error);
         speakBtn.disabled = false;
       }
+    });
+
+    // Test All Voices handler (diagnostic) - user gesture required
+    const testAllBtn = document.getElementById('testall-btn');
+    testAllBtn.addEventListener('click', async () => {
+      const voices = synth.getVoices();
+      if (!voices || voices.length === 0) {
+        logError('No voices available to test');
+        return;
+      }
+
+      log(`Starting diagnostic: testing ${voices.length} voices (may be blocked by mobile browser after the first utterance)`);
+      testAllBtn.disabled = true;
+      speakBtn.disabled = true;
+
+      for (let i = 0; i < voices.length; i++) {
+        const v = voices[i];
+        const sample = `Testing voice ${i + 1} ${v.name}`;
+        log(`Attempting voice ${i + 1}/${voices.length}: ${v.name} (${v.lang}) voiceURI: ${v.voiceURI}`);
+        try {
+          // Cancel any previous speech then try to speak with this voice
+          synth.cancel();
+          const u = new SpeechSynthesisUtterance(sample);
+          u.voice = v;
+          try { if (v.lang) u.lang = v.lang; } catch (e) {}
+
+          let finished = false;
+          const waitForFinish = new Promise(resolve => {
+            const t = setTimeout(() => {
+              if (!finished) {
+                log(`Timeout waiting for voice ${v.name} to finish (browser may have blocked it)`);
+                finished = true;
+                resolve();
+              }
+            }, 2500);
+
+            u.onend = () => {
+              if (!finished) {
+                finished = true;
+                clearTimeout(t);
+                log(`Completed: ${v.name}`);
+                resolve();
+              }
+            };
+
+            u.onerror = (ev) => {
+              if (!finished) {
+                finished = true;
+                clearTimeout(t);
+                logError(`Error while speaking with ${v.name}`, ev);
+                resolve();
+              }
+            };
+          });
+
+          synth.speak(u);
+          await waitForFinish;
+        } catch (err) {
+          logError(`Exception testing voice ${v.name}`, err);
+        }
+
+        // brief pause between attempts
+        await new Promise(r => setTimeout(r, 300));
+      }
+
+      log('Diagnostic complete');
+      testAllBtn.disabled = false;
+      speakBtn.disabled = false;
     });
 
     // Stop button handler
