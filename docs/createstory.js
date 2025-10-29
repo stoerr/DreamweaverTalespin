@@ -5,7 +5,7 @@
  * Call OpenAI Chat Completions API
  * @param {string} apiKey - OpenAI API key
  * @param {Array<{role: string, content: string}>} messages - Chat messages
- * @param {Object} opts - Optional parameters (model, temperature, max_tokens)
+ * @param {Object} opts - Optional parameters (model, temperature, max_tokens, response_format)
  * @returns {Promise<string>} - Response text from OpenAI
  */
 async function callOpenAI(apiKey, messages, opts = {}) {
@@ -15,6 +15,11 @@ async function callOpenAI(apiKey, messages, opts = {}) {
     temperature: opts.temperature ?? 1,
     max_completion_tokens: typeof opts.max_tokens === 'number' ? opts.max_tokens : 1024,
   };
+
+  // Add response_format if specified (for JSON mode)
+  if (opts.response_format) {
+    body.response_format = opts.response_format;
+  }
 
   const resp = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -43,12 +48,32 @@ async function callOpenAI(apiKey, messages, opts = {}) {
 }
 
 /**
- * Parse outline text into structured data
- * @param {string} text - Raw outline text from AI
- * @returns {Array<{title: string, description: string, chapterText: null}>} - Parsed outline entries
+ * Parse outline text (JSON or fallback to legacy format) into structured data
+ * @param {string} text - Raw outline text from AI (JSON or legacy line format)
+ * @returns {{title: string|null, chapters: Array<{title: string, description: string, details: string, chapterText: null}>}} - Parsed outline with title and entries
  */
 function parseOutline(text) {
-  // Expect lines like "1. Title - description" or "1) Title - description"
+  // Try to parse as JSON first
+  try {
+    const json = JSON.parse(text);
+    if (json && json.chapters && Array.isArray(json.chapters)) {
+      // Structured JSON format
+      const entries = json.chapters.map(ch => ({
+        title: ch.chaptertitle || ch.title || 'Untitled',
+        description: ch.chaptershortdescription || ch.description || '',
+        details: ch.chapterdetails || '',
+        chapterText: null
+      }));
+      return {
+        title: json.title || null,
+        chapters: entries
+      };
+    }
+  } catch (e) {
+    // Not JSON or invalid format, fall through to legacy parsing
+  }
+
+  // Legacy format: lines like "1. Title - description"
   const lines = (text || '').split('\n').map(l => l.trim()).filter(l => l);
   const entries = [];
   for (const line of lines) {
@@ -64,9 +89,12 @@ function parseOutline(text) {
       title = sepMatch[1].trim();
       description = sepMatch[2].trim();
     }
-    entries.push({ title, description, chapterText: null });
+    entries.push({ title, description, details: '', chapterText: null });
   }
-  return entries;
+  return {
+    title: null,
+    chapters: entries
+  };
 }
 
 /**
@@ -83,28 +111,74 @@ function getLanguageInstruction(languageCode) {
 }
 
 /**
- * Generate story outline using AI
+ * Generate story outline using AI with structured JSON output
  * @param {string} apiKey - OpenAI API key
  * @param {string} storyPrompt - User's story idea
  * @param {string} systemPrompt - System prompt for outline generation
  * @param {string|null} languageCode - Optional language code
- * @returns {Promise<Array<{title: string, description: string, chapterText: null}>>} - Generated outline
+ * @returns {Promise<{title: string|null, chapters: Array<{title: string, description: string, details: string, chapterText: null}>}>} - Generated outline with title
  */
 async function generateOutline(apiKey, storyPrompt, systemPrompt, languageCode = null) {
   const messages = [];
   const langInstr = getLanguageInstruction(languageCode);
   if (langInstr) messages.push({ role: 'system', content: langInstr });
+
   messages.push({ role: 'system', content: systemPrompt });
   messages.push({ role: 'user', content: storyPrompt });
 
-  const text = await callOpenAI(apiKey, messages);
+  // Define JSON Schema for structured output
+  const responseFormat = {
+    type: "json_schema",
+    json_schema: {
+      name: "story_outline",
+      strict: true,
+      schema: {
+        type: "object",
+        properties: {
+          title: {
+            type: "string",
+            description: "The title of the book"
+          },
+          chapters: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                chaptertitle: {
+                  type: "string",
+                  description: "Title of the chapter"
+                },
+                chaptershortdescription: {
+                  type: "string",
+                  description: "One sentence short description of the chapter starting with where"
+                },
+                chapterdetails: {
+                  type: "string",
+                  description: "One paragraph detailed description of the chapter, including what happens and who is involved"
+                }
+              },
+              required: ["chaptertitle", "chaptershortdescription", "chapterdetails"],
+              additionalProperties: false
+            }
+          }
+        },
+        required: ["title", "chapters"],
+        additionalProperties: false
+      }
+    }
+  };
+
+  const text = await callOpenAI(apiKey, messages, {
+    response_format: responseFormat
+  });
+
   return parseOutline(text);
 }
 
 /**
  * Generate a single chapter using AI
  * @param {string} apiKey - OpenAI API key
- * @param {Object} chapterInfo - Chapter information {title: string, description: string}
+ * @param {Object} chapterInfo - Chapter information {title: string, description: string, details: string}
  * @param {string} systemPrompt - System prompt for chapter generation
  * @param {Array<{title: string, description: string, chapterText: string|null}>} priorChapters - Previous chapters for context
  * @param {string|null} languageCode - Optional language code
@@ -126,8 +200,11 @@ async function generateChapter(apiKey, chapterInfo, systemPrompt, priorChapters 
     }
   }
 
-  // Request the current chapter
-  const userContent = `Chapter: ${chapterInfo.title}\nDescription: ${chapterInfo.description}`;
+  // Request the current chapter with details if available
+  let userContent = `Chapter: ${chapterInfo.title}\nDescription: ${chapterInfo.description}`;
+  if (chapterInfo.details) {
+    userContent += `\nDetails: ${chapterInfo.details}`;
+  }
   messages.push({ role: 'user', content: userContent });
 
   const response = await callOpenAI(apiKey, messages);

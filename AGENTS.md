@@ -12,7 +12,8 @@ Keep these quick facts in mind so you can start working without reading the whol
 
 - Main files:
   - `docs/index.html` — main UI and IDs used by the script.
-  - `docs/app.js` — main application logic (outline generation, chapter generation, TTS, voice/language handling, localStorage usage, OpenAI calls).
+  - `docs/app.js` — UI interface logic (TTS, voice/language handling, localStorage usage).
+  - `docs/createstory.js` - business logic (outline generation, chapter generation, OpenAI calls)
   - `docs/style.css` — styling.
   - `dev-server.js` — simple dev server (port 3001 by default).
   - `prompts/outline.md` and `prompts/chapter.md` — default system prompts that `app.js` loads on startup.

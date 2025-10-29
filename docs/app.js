@@ -28,7 +28,8 @@ const storyExamplesSelect = document.getElementById('story-examples');
 // This array will be replaced with contents of ./prompts/storyprompt-examples.json if available
 let loadedExamples = [];
 
-let outline = []; // {title, description, chapterText (optional)}
+let outline = []; // {title, description, details, chapterText (optional)}
+let storyTitle = null; // Book title from outline generation
 let selectedIndex = null;
 let isGenerating = false;
 let synth = window.speechSynthesis;
@@ -299,7 +300,9 @@ async function generateOutline(foreground = true) {
 
   try {
     const languageCode = getLanguageCode();
-    outline = await window.StoryGenerator.generateOutline(apiKey, storyPrompt, systemPrompt, languageCode);
+    const result = await window.StoryGenerator.generateOutline(apiKey, storyPrompt, systemPrompt, languageCode);
+    storyTitle = result.title;
+    outline = result.chapters;
     renderOutline();
     if (foreground) showMessageInChapterContainer('<div class="placeholder">Outline generated. Select a chapter to generate it.</div>');
     return outline;
@@ -338,6 +341,10 @@ function renderOutline() {
     el.type = 'button';
     el.className = 'list-group-item list-group-item-action';
     el.innerHTML = `<strong>${idx + 1}. ${escapeHtml(item.title)}</strong><div class="small text-muted">${escapeHtml(item.description)}</div>`;
+    // Add chapter details as hover tooltip if available
+    if (item.details) {
+      el.title = item.details;
+    }
     el.addEventListener('click', () => selectOutlineIndex(idx));
     outlineList.appendChild(el);
   });

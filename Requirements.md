@@ -26,3 +26,16 @@ And third, the chapters will be read aloud, one after each other, while the next
 - It's done serverless in HTML+CSS+JavaScript. 
 - We will use the OpenAI APIs. And bootstrap for formatting, imported from CDN.
 - For the development server the files are served from directory docs/.
+- For the book outline use this JSON format.
+```json
+{ "title": "the book title",
+  "chapters": [
+    {
+      "chaptertitle": "title of the chapter",
+      "chaptershortdescription": "one sentence short description of the chapter starting with where",
+      "chapterdetails": "one paragraph detailed description of the chapter, including what happens and who is involved"
+    },
+    /** other chapters **/
+    ]
+}
+```
