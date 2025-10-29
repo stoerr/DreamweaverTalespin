@@ -153,33 +153,32 @@ function setupTextareaAutoResize() {
 
 // Populate voices and languages
 function populateVoicesAndLanguages() {
-  const voices = synth.getVoices();
-  // Build languages set from voice.lang (prefix before '-')
-  // const langs = Array.from(new Set(voices.map(v => (v.lang || 'unknown').split('-')[0]))).filter(Boolean).sort();
-  const langs = ['en', 'de', 'es', 'fr'];
+   // Build languages set from voice.lang (prefix before '-')
+   // const langs = Array.from(new Set(voices.map(v => (v.lang || 'unknown').split('-')[0]))).filter(Boolean).sort();
+   const langs = ['en', 'de', 'es', 'fr'];
 
-  // Populate languageSelect if present
-  if (languageSelect) {
-    const prev = languageSelect.value;
-    languageSelect.innerHTML = '';
-    // add an 'any' option
-    const anyOpt = document.createElement('option');
-    anyOpt.value = '';
-    anyOpt.textContent = 'Any';
-    languageSelect.appendChild(anyOpt);
-    langs.forEach(l => {
-      const opt = document.createElement('option');
-      opt.value = l;
-      opt.textContent = l;
-      languageSelect.appendChild(opt);
-    });
-    // If user had a previous selection, restore it. Otherwise prefer English if available.
-    if (prev) languageSelect.value = prev;
-    else if (langs.includes('en')) languageSelect.value = 'en';
-  }
+   // Populate languageSelect if present
+   if (languageSelect) {
+     const prev = languageSelect.value;
+     languageSelect.innerHTML = '';
+     // add an 'any' option
+     const anyOpt = document.createElement('option');
+     anyOpt.value = '';
+     anyOpt.textContent = 'Any';
+     languageSelect.appendChild(anyOpt);
+     langs.forEach(l => {
+       const opt = document.createElement('option');
+       opt.value = l;
+       opt.textContent = l;
+       languageSelect.appendChild(opt);
+     });
+     // If user had a previous selection, restore it. Otherwise prefer English if available.
+     if (prev) languageSelect.value = prev;
+     else if (langs.includes('en')) languageSelect.value = 'en';
+   }
 
-  // Populate voiceSelect filtered by language
-  refreshVoiceSelect();
+   // Populate voiceSelect filtered by language
+   refreshVoiceSelect();
 }
 
 function refreshVoiceSelect() {
@@ -190,13 +189,13 @@ function refreshVoiceSelect() {
   const storedSelection = (function(){ try { return localStorage.getItem(VOICE_STORAGE) || ''; } catch(e){ return ''; } })();
   voiceSelect.innerHTML = '';
 
-  // Filter voices by language - more robust filtering for mobile
+  // Filter voices by language - more robust filtering for mobile (handle - and _ separators)
   const filtered = voices.filter(v => {
     if (!lang) return true; // any
     const voiceLang = (v.lang || '').toLowerCase();
-    const langPrefix = voiceLang.split('-')[0];
+    const langPrefix = voiceLang.split(/[-_]/)[0];
     const langLower = lang.toLowerCase();
-    return langPrefix === langLower || voiceLang === langLower || voiceLang.startsWith(langLower + '-');
+    return langPrefix === langLower || voiceLang === langLower || voiceLang.startsWith(langLower + '-') || voiceLang.startsWith(langLower + '_');
   });
 
   // If no voices match the language, fall back to all voices
@@ -207,12 +206,13 @@ function refreshVoiceSelect() {
     let score = 0;
     if (v.default) score += 100;
     const name = (v.name || '').toLowerCase();
-    // Heuristic provider/quality keywords
+    // Prefer localService voices where possible (more likely honored on mobile)
+    if (v.localService) score += 30;
     if (name.includes('google') || name.includes('neural') || name.includes('premium') || name.includes('high')) score += 50;
     if (name.includes('microsoft') || name.includes('azure')) score += 40;
     // prefer exact language match
     if (languageSelect && languageSelect.value) {
-      const p = (v.lang || '').toLowerCase().split('-')[0];
+      const p = (v.lang || '').toLowerCase().split(/[-_]/)[0];
       if (p === languageSelect.value.toLowerCase()) score += 20;
     }
     // shorter, clean names slightly preferred
@@ -223,7 +223,8 @@ function refreshVoiceSelect() {
   toShow.sort((a, b) => voiceQualityScore(b) - voiceQualityScore(a));
   toShow.forEach(v => {
     const opt = document.createElement('option');
-    opt.value = v.name;
+    // Use voiceURI as the option value to uniquely identify voices across browsers (fallback to name)
+    opt.value = v.voiceURI || v.name;
     opt.textContent = `${v.name} (${v.lang})${v.default ? ' — default' : ''}`;
     voiceSelect.appendChild(opt);
   });
@@ -512,32 +513,39 @@ function speakChapter(idx) {
   selectOutlineIndex(idx);
 
   const utter = new SpeechSynthesisUtterance(item.chapterText);
-  const selectedVoiceName = voiceSelect.value;
+  const selectedVoiceValue = voiceSelect.value;
   const voices = synth.getVoices();
 
-  // Try multiple methods to find the voice for better mobile compatibility
-  let v = voices.find(x => x.name === selectedVoiceName);
+  // Prefer matching by voiceURI (more stable/unique across platforms), then fall back to name matches
+  let v = voices.find(x => x.voiceURI === selectedVoiceValue);
 
-  // Fallback 1: Try case-insensitive match
+  // Fallback 1: Try case-insensitive match on voiceURI
   if (!v) {
-    v = voices.find(x => x.name.toLowerCase() === selectedVoiceName.toLowerCase());
+    v = voices.find(x => (x.voiceURI || '').toLowerCase() === (selectedVoiceValue || '').toLowerCase());
   }
 
-  // Fallback 2: Try matching by voiceURI
+  // Fallback 2: Try exact name match
   if (!v) {
-    v = voices.find(x => x.voiceURI === selectedVoiceName);
+    v = voices.find(x => x.name === selectedVoiceValue);
   }
 
-  // Fallback 3: Try partial match
+  // Fallback 3: Try case-insensitive name match
   if (!v) {
-    v = voices.find(x => x.name.includes(selectedVoiceName) || selectedVoiceName.includes(x.name));
+    v = voices.find(x => (x.name || '').toLowerCase() === (selectedVoiceValue || '').toLowerCase());
+  }
+
+  // Fallback 4: Try partial match
+  if (!v) {
+    v = voices.find(x => (x.name || '').includes(selectedVoiceValue) || (selectedVoiceValue || '').includes(x.name || ''));
   }
 
   if (v) {
     utter.voice = v;
+    // Also hint the utterance language to increase chance the browser honors the selected voice
+    try { if (v.lang) utter.lang = v.lang; } catch (e) {}
     console.log(`Using voice: ${v.name} (${v.lang})`);
   } else {
-    console.warn(`Could not find voice "${selectedVoiceName}", using browser default`);
+    console.warn(`Could not find voice "${selectedVoiceValue}", using browser default`);
   }
 
   // when speaking starts, update UI state
