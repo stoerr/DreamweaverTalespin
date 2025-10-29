@@ -79,31 +79,11 @@
       margin-top: -10px;
       margin-bottom: 15px;
     }
-    .status {
-      padding: 10px;
-      border-radius: 4px;
-      margin-bottom: 15px;
-    }
-    .status.info {
-      background-color: #d1ecf1;
-      color: #0c5460;
-      border: 1px solid #bee5eb;
-    }
-    .status.error {
-      background-color: #f8d7da;
-      color: #721c24;
-      border: 1px solid #f5c6cb;
-    }
-    .status.success {
-      background-color: #d4edda;
-      color: #155724;
-      border: 1px solid #c3e6cb;
-    }
   </style>
 </head>
 <body>
   <h1>Text-to-Speech Test</h1>
-  <p class="subtitle">Test the browser's speech synthesis to diagnose TTS issues</p>
+  <p class="subtitle">Test the browser's speech synthesis to diagnose TTS issues.</p>
 
   <div class="card">
     <label for="language-select">Language</label>
@@ -140,7 +120,7 @@
     let currentUtterance = null;
 
     // Logging function
-    function log(message, type = 'info') {
+    function log(message) {
       const timestamp = new Date().toLocaleTimeString();
       const logLine = `[${timestamp}] ${message}\n`;
       output.value += logLine;
@@ -271,7 +251,7 @@
         const voiceLang = (v.lang || '').toLowerCase();
         const langPrefix = voiceLang.split('-')[0];
         const langLower = lang.toLowerCase();
-        const match = langPrefix === langLower || voiceLang === langLower || voiceLang.startsWith(langLower + '-');
+        const match = langPrefix === langLower || voiceLang === langLower || voiceLang.startsWith(langLower + '-') || voiceLang.startsWith(langLower + '_');
         if (match) {
           log(`  Matched voice: ${v.name} with lang "${v.lang}"`);
         }
@@ -295,7 +275,7 @@
         if (name.includes('google') || name.includes('neural') || name.includes('premium') || name.includes('high')) score += 50;
         if (name.includes('microsoft') || name.includes('azure')) score += 40;
         if (languageSelect.value) {
-          const p = (v.lang || '').toLowerCase().split('-')[0];
+          const p = (v.lang || '').toLowerCase().split('-|_')[0];
           if (p === languageSelect.value.toLowerCase()) score += 20;
         }
         score += Math.max(0, 10 - (v.name || '').length * 0.1);
