@@ -91,6 +91,13 @@
             margin-top: -10px;
             margin-bottom: 15px;
         }
+
+        .inline {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
     </style>
 </head>
 <body>
@@ -105,6 +112,17 @@
     <label for="voice-select">Voice</label>
     <select id="voice-select"></select>
     <div class="help-text">Voices are sorted by quality (best first)</div>
+
+    <!-- New: OpenAI TTS option -->
+    <div style="margin-top:10px;">
+        <label for="use-openai-tts">Use OpenAI high-quality TTS</label>
+        <div class="inline">
+            <input type="checkbox" id="use-openai-tts">
+            <div style="flex:1">
+                <div class="help-text">When enabled the app will attempt to call OpenAI's Text-to-Speech API and play the returned audio instead of using the browser's SpeechSynthesis. The OpenAI API key is read from localStorage key <code>chatgpt_api_key</code> (you will be prompted to enter it if missing).</div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <div class="card">
@@ -119,6 +137,9 @@
     <textarea id="output" rows="10" readonly placeholder="Messages and errors will appear here..."></textarea>
 </div>
 
+<!-- Hidden audio element for playing OpenAI TTS results -->
+<audio id="openai-audio" controls style="display:none"></audio>
+
 <script>
     // Main application logic
     const languageSelect = document.getElementById('language-select');
@@ -127,6 +148,8 @@
     const speakBtn = document.getElementById('speak-btn');
     const stopBtn = document.getElementById('stop-btn');
     const output = document.getElementById('output');
+    const useOpenAiCheckbox = document.getElementById('use-openai-tts');
+    const openaiAudio = document.getElementById('openai-audio');
 
     const synth = window.speechSynthesis;
     let currentUtterance = null;
@@ -152,6 +175,112 @@
         output.value += logLine;
         output.scrollTop = output.scrollHeight;
         console.error(message, error);
+    }
+
+    // Helper: retrieve API key from localStorage or prompt user
+    function getOpenAIApiKey() {
+        const key = localStorage.getItem('chatgpt_api_key');
+        if (key && key.trim()) return key.trim();
+        const entered = prompt('Enter your OpenAI API key (will be stored in localStorage at key "chatgpt_api_key"):');
+        if (entered && entered.trim()) {
+            localStorage.setItem('chatgpt_api_key', entered.trim());
+            return entered.trim();
+        }
+        return null;
+    }
+
+    // Speak using OpenAI TTS: sends text to OpenAI audio/speech endpoint and plays returned audio
+    async function openaiSpeak(text) {
+        log('openaiSpeak: preparing request');
+        const apiKey = getOpenAIApiKey();
+        if (!apiKey) {
+            logError('OpenAI API key not provided - falling back to browser TTS');
+            return false;
+        }
+
+        // Choose endpoint and model - may need updating depending on OpenAI's current API.
+        // This uses the v1/audio/speech endpoint which returns audio binary data (e.g. audio/mpeg).
+        const endpoint = 'https://api.openai.com/v1/audio/speech';
+        const model = 'gpt-4o-mini-tts'; // reasonable default; change if needed
+
+        speakBtn.disabled = true;
+        log('openaiSpeak: sending request to OpenAI TTS');
+
+        try {
+            const payload = {
+                model: model,
+                voice: 'alloy', // example voice name - may vary by API availability
+                input: text
+            };
+
+            // Many OpenAI TTS endpoints return audio binary. We'll request 'audio/mpeg' via Accept header.
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'audio/mpeg'
+                },
+                body: JSON.stringify(payload)
+            });
+
+            if (!res.ok) {
+                const txt = await res.text();
+                logError(`OpenAI TTS request failed: ${res.status} ${res.statusText}`, txt);
+                speakBtn.disabled = false;
+                return false;
+            }
+
+            const contentType = res.headers.get('content-type') || '';
+            log(`openaiSpeak: response content-type: ${contentType}`);
+
+            // If response is JSON with an URL, try to parse and fetch it
+            if (contentType.includes('application/json')) {
+                const j = await res.json();
+                log('openaiSpeak: received JSON response - attempting to find audio URL');
+                // Common pattern: { audio: { url: '...' } } or { url: '...' } - adapt defensively
+                let audioUrl = null;
+                if (j && j.url) audioUrl = j.url;
+                else if (j && j.audio && j.audio.url) audioUrl = j.audio.url;
+                if (audioUrl) {
+                    log('openaiSpeak: fetching audio from provided URL');
+                    const audioRes = await fetch(audioUrl);
+                    if (!audioRes.ok) {
+                        const txt = await audioRes.text().catch(()=>`status ${audioRes.status}`);
+                        logError(`Failed to fetch audio URL: ${audioRes.status} ${audioRes.statusText}`, txt);
+                        speakBtn.disabled = false;
+                        return false;
+                    }
+                    const arrayBuffer = await audioRes.arrayBuffer();
+                    const blob = new Blob([arrayBuffer], { type: audioRes.headers.get('content-type') || 'audio/mpeg' });
+                    openaiAudio.src = URL.createObjectURL(blob);
+                } else {
+                    logError('openaiSpeak: JSON response did not contain an audio URL', j);
+                    speakBtn.disabled = false;
+                    return false;
+                }
+            } else {
+                // Assume binary audio was returned directly
+                const arrayBuffer = await res.arrayBuffer();
+                const blob = new Blob([arrayBuffer], { type: contentType || 'audio/mpeg' });
+                openaiAudio.src = URL.createObjectURL(blob);
+            }
+
+            openaiAudio.style.display = '';
+            openaiAudio.onended = () => {
+                log('OpenAI audio playback finished');
+                speakBtn.disabled = false;
+            };
+
+            await openaiAudio.play();
+            log('Playing OpenAI generated audio');
+            return true;
+
+        } catch (err) {
+            logError('openaiSpeak: exception while requesting/playing OpenAI TTS', err);
+            speakBtn.disabled = false;
+            return false;
+        }
     }
 
     // Initialize on load
@@ -325,7 +454,7 @@
     });
 
     // Speak button handler
-    speakBtn.addEventListener('click', () => {
+    speakBtn.addEventListener('click', async () => {
         const text = textInput.value.trim();
 
         if (!text) {
@@ -337,6 +466,17 @@
         log(`Text length: ${text.length} characters`);
 
         try {
+            // If OpenAI TTS is enabled, try it first
+            if (useOpenAiCheckbox.checked) {
+                log('OpenAI TTS enabled - attempting remote synthesis');
+                // Cancel any current browser speech to avoid overlap
+                try { synth.cancel(); } catch (e) { /* ignore */ }
+                const ok = await openaiSpeak(text);
+                if (ok) return; // successfully played by OpenAI audio
+                log('Falling back to browser SpeechSynthesis after OpenAI TTS failure');
+            }
+
+            // Continue with browser speechSynthesis (existing logic)
             // Cancel any current speech
             synth.cancel();
 
@@ -462,6 +602,8 @@
         log('Stop button clicked');
         try {
             synth.cancel();
+            // Stop any playing OpenAI audio
+            try { openaiAudio.pause(); openaiAudio.currentTime = 0; } catch (e) { }
             currentUtterance = null;
             speakBtn.disabled = false;
             log('Speech synthesis cancelled');
