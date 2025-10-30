@@ -429,8 +429,8 @@ async function generateChapter(idx, foreground = true) {
       item,
       systemPrompt,
       priorChapters,
-      languageCode,
-      storyPrompt
+      storyPrompt,
+      languageCode
     );
 
     item.chapterText = resp;

@@ -123,13 +123,11 @@ function getLanguageInstruction(languageCode) {
  * @param {string|null} languageCode - Optional language code
  * @returns {Promise<{title: string|null, chapters: Array<{title: string, description: string, details: string, chapterText: null}>}>} - Generated outline with title
  */
-async function generateOutline(apiKey, storyPrompt, systemPrompt, languageCode = null, storyPrompt) {
+async function generateOutline(apiKey, storyPrompt, systemPrompt, languageCode = null) {
   const messages = [];
   const langInstr = getLanguageInstruction(languageCode);
 
-  messages.push({ role: 'system', content: systemPrompt +
-          '\n\n' + 'Prompt for the story in general: ' + storyPrompt +
-          '\n\n'+ langInstr });
+  messages.push({ role: 'system', content: systemPrompt + '\n\n'+ langInstr });
   messages.push({ role: 'user', content: storyPrompt });
 
   // Define JSON Schema for structured output
@@ -187,14 +185,17 @@ async function generateOutline(apiKey, storyPrompt, systemPrompt, languageCode =
  * @param {Object} chapterInfo - Chapter information {title: string, description: string, details: string}
  * @param {string} systemPrompt - System prompt for chapter generation
  * @param {Array<{title: string, description: string, chapterText: string|null}>} priorChapters - Previous chapters for context
+ * @param {string} storyPrompt - Original story prompt
  * @param {string|null} languageCode - Optional language code
  * @returns {Promise<string>} - Generated chapter text
  */
-async function generateChapter(apiKey, chapterInfo, systemPrompt, priorChapters = [], languageCode = null) {
+async function generateChapter(apiKey, chapterInfo, systemPrompt, priorChapters = [], storyPrompt, languageCode = null) {
   const messages = [];
   const langInstr = getLanguageInstruction(languageCode);
-  if (langInstr) messages.push({ role: 'system', content: langInstr });
-  messages.push({ role: 'system', content: systemPrompt });
+  messages.push({ role: 'system', content: systemPrompt
+    + `\n\n${langInstr}`
+    + `\n\nThe story prompt is: ${storyPrompt}`
+  });
 
   // Add prior chapters as context
   for (const prev of priorChapters) {
