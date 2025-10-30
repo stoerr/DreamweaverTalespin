@@ -1,7 +1,7 @@
 // Business logic and AI access for story generation
 // This module contains no DOM manipulation - only pure functions that work with strings and data structures
 
-const defaultmodel = "gpt-4o-mini"; // just for quick testing
+const defaultmodel = "gpt-5";
 
 /**
  * Call OpenAI Chat Completions API
