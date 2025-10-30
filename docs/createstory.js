@@ -56,7 +56,7 @@ async function callOpenAI(apiKey, messages, opts = {}) {
 /**
  * Parse outline text (JSON or fallback to legacy format) into structured data
  * @param {string} text - Raw outline text from AI (JSON or legacy line format)
- * @returns {{title: string|null, chapters: Array<{title: string, description: string, details: string, chapterText: null}>}} - Parsed outline with title and entries
+ * @returns {{title: string|null, subtitle: string|null, description: string|null, characters: Array<{name: string, description: string}>|null, chapters: Array<{title: string, description: string, details: string, chapterText: null}>}} - Parsed outline with title and entries
  */
 function parseOutline(text) {
     // Try to parse as JSON first
@@ -72,6 +72,9 @@ function parseOutline(text) {
             }));
             return {
                 title: json.title || null,
+                subtitle: json.subtitle || null,
+                description: json.description || null,
+                characters: json.characters || null,
                 chapters: entries
             };
         }
@@ -99,6 +102,9 @@ function parseOutline(text) {
     }
     return {
         title: null,
+        subtitle: null,
+        description: null,
+        characters: null,
         chapters: entries
     };
 }
@@ -122,7 +128,7 @@ function getLanguageInstruction(languageCode) {
  * @param {string} storyPrompt - User's story idea
  * @param {string} systemPrompt - System prompt for outline generation
  * @param {string|null} languageCode - Optional language code
- * @returns {Promise<{title: string|null, chapters: Array<{title: string, description: string, details: string, chapterText: null}>}>} - Generated outline with title
+ * @returns {Promise<{title: string|null, subtitle: string|null, description: string|null, characters: Array<{name: string, description: string}>|null, chapters: Array<{title: string, description: string, details: string, chapterText: null}>}>} - Generated outline with title
  */
 async function generateOutline(apiKey, storyPrompt, systemPrompt, languageCode = null) {
     const messages = [];
@@ -143,6 +149,33 @@ async function generateOutline(apiKey, storyPrompt, systemPrompt, languageCode =
                     title: {
                         type: "string",
                         description: "The title of the book"
+                    },
+                    subtitle: {
+                        type: "string",
+                        description: "The subtitle of the book"
+                    },
+                    description: {
+                        type: "string",
+                        description: "A short description of the book (2-3 sentences)"
+                    },
+                    characters: {
+                        type: "array",
+                        description: "List of main characters in the story",
+                        items: {
+                            type: "object",
+                            properties: {
+                                name: {
+                                    type: "string",
+                                    description: "Character name"
+                                },
+                                description: {
+                                    type: "string",
+                                    description: "Short description of main character traits"
+                                }
+                            },
+                            required: ["name", "description"],
+                            additionalProperties: false
+                        }
                     },
                     chapters: {
                         type: "array",
@@ -167,7 +200,7 @@ async function generateOutline(apiKey, storyPrompt, systemPrompt, languageCode =
                         }
                     }
                 },
-                required: ["title", "chapters"],
+                required: ["title", "subtitle", "description", "characters", "chapters"],
                 additionalProperties: false
             }
         }
@@ -188,15 +221,30 @@ async function generateOutline(apiKey, storyPrompt, systemPrompt, languageCode =
  * @param {Array<{title: string, description: string, chapterText: string|null}>} priorChapters - Previous chapters for context
  * @param {string} storyPrompt - Original story prompt
  * @param {string|null} languageCode - Optional language code
+ * @param {Object|null} bookMetadata - Book metadata {title: string, subtitle: string, description: string, characters: Array}
  * @returns {Promise<string>} - Generated chapter text
  */
-async function generateChapter(apiKey, chapterInfo, systemPrompt, priorChapters = [], storyPrompt, languageCode = null) {
+async function generateChapter(apiKey, chapterInfo, systemPrompt, priorChapters = [], storyPrompt, languageCode = null, bookMetadata = null) {
     const messages = [];
     const langInstr = getLanguageInstruction(languageCode);
+
+    let contextInfo = "";
+
+    // Add book metadata as JSON context if available
+    if (bookMetadata && (bookMetadata.subtitle || bookMetadata.description || bookMetadata.characters)) {
+        contextInfo += '\n\nBook context:\n```json\n' + JSON.stringify({
+            title: bookMetadata.title,
+            subtitle: bookMetadata.subtitle,
+            description: bookMetadata.description,
+            characters: bookMetadata.characters
+        }, null, 2) + '\n```';
+    }
+    contextInfo = `${contextInfo}\n\nThe story prompt is: ${storyPrompt}`
+
     messages.push({
         role: 'system', content: systemPrompt
             + `\n\n${langInstr}`
-            + `\n\nThe story prompt is: ${storyPrompt}`
+            + contextInfo
     });
 
     // Add prior chapters as context

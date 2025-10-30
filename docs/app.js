@@ -30,6 +30,9 @@ let loadedExamples = [];
 
 let outline = []; // {title, description, details, chapterText (optional)}
 let storyTitle = null; // Book title from outline generation
+let storySubtitle = null; // Book subtitle from outline generation
+let storyDescription = null; // Book description from outline generation
+let storyCharacters = null; // Main characters from outline generation (array of {name, description})
 let selectedIndex = null;
 let isGenerating = false;
 let synth = window.speechSynthesis;
@@ -331,6 +334,9 @@ async function generateOutline(foreground = true) {
         const languageCode = getLanguageCode();
         const result = await window.StoryGenerator.generateOutline(apiKey, storyPrompt, systemPrompt, languageCode);
         storyTitle = result.title;
+        storySubtitle = result.subtitle;
+        storyDescription = result.description;
+        storyCharacters = result.characters;
         outline = result.chapters;
         renderOutline();
         if (foreground) showMessageInChapterContainer('<div class="placeholder">Outline generated. Select a chapter to generate it.</div>');
@@ -363,6 +369,34 @@ function renderOutline() {
         div.textContent = 'No outline yet. Generate one to start.';
         outlineList.appendChild(div);
         return;
+    }
+
+    // Display book metadata at the top if available
+    if (storyTitle || storySubtitle || storyDescription || (storyCharacters && storyCharacters.length)) {
+        const metadataDiv = document.createElement('div');
+        metadataDiv.className = 'list-group-item';
+        metadataDiv.style.backgroundColor = '#f8f9fa';
+
+        let metadataHtml = '';
+        if (storyTitle) {
+            metadataHtml += `<h5 class="mb-1">${escapeHtml(storyTitle)}</h5>`;
+        }
+        if (storySubtitle) {
+            metadataHtml += `<h6 class="mb-2 text-muted">${escapeHtml(storySubtitle)}</h6>`;
+        }
+        if (storyDescription) {
+            metadataHtml += `<p class="mb-2">${escapeHtml(storyDescription)}</p>`;
+        }
+        if (storyCharacters && storyCharacters.length) {
+            metadataHtml += `<div class="mt-2"><strong>Main Characters:</strong><ul class="mb-0 mt-1">`;
+            storyCharacters.forEach(char => {
+                metadataHtml += `<li><strong>${escapeHtml(char.name)}</strong>: ${escapeHtml(char.description)}</li>`;
+            });
+            metadataHtml += `</ul></div>`;
+        }
+
+        metadataDiv.innerHTML = metadataHtml;
+        outlineList.appendChild(metadataDiv);
     }
 
     outline.forEach((item, idx) => {
@@ -451,6 +485,13 @@ async function generateChapter(idx, foreground = true) {
         const priorChapters = outline.slice(0, idx);
         const storyPrompt = (storyPromptInput && storyPromptInput.value || '').trim();
 
+        // Prepare book metadata
+        const bookMetadata = {
+            title: storyTitle,
+            subtitle: storySubtitle,
+            description: storyDescription,
+            characters: storyCharacters
+        };
 
         const resp = await window.StoryGenerator.generateChapter(
             apiKey,
@@ -458,7 +499,8 @@ async function generateChapter(idx, foreground = true) {
             systemPrompt,
             priorChapters,
             storyPrompt,
-            languageCode
+            languageCode,
+            bookMetadata
         );
 
         item.chapterText = resp;
