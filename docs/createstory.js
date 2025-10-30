@@ -161,6 +161,7 @@ async function generateOutline(apiKey, storyPrompt, systemPrompt, languageCode =
                     characters: {
                         type: "array",
                         description: "List of main characters in the story",
+                        minItems: 1,
                         items: {
                             type: "object",
                             properties: {
@@ -179,6 +180,7 @@ async function generateOutline(apiKey, storyPrompt, systemPrompt, languageCode =
                     },
                     chapters: {
                         type: "array",
+                        minItems: 1,
                         items: {
                             type: "object",
                             properties: {

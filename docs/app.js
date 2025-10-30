@@ -567,9 +567,11 @@ function renderOutline() {
 
 function selectOutlineIndex(idx) {
     selectedIndex = idx;
-    // highlight selection
+    // highlight selection - account for metadata div at index 0 if present
+    const metadataOffset = (storyTitle || storySubtitle || storyDescription || (storyCharacters && storyCharacters.length)) ? 1 : 0;
     Array.from(outlineList.children).forEach((c, i) => {
-        c.classList.toggle('active', i === idx);
+        // Chapter at index 'idx' in outline array is at DOM index 'idx + metadataOffset'
+        c.classList.toggle('active', i === idx + metadataOffset);
     });
 
     const item = outline[idx];
