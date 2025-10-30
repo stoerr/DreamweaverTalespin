@@ -170,7 +170,7 @@ async function generateOutline(apiKey, storyPrompt, systemPrompt, languageCode =
                                 },
                                 description: {
                                     type: "string",
-                                    description: "Short description of main character traits"
+                                    description: "A description of main character traits. One paragraph."
                                 }
                             },
                             required: ["name", "description"],
