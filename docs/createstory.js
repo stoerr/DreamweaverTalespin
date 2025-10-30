@@ -1,6 +1,8 @@
 // Business logic and AI access for story generation
 // This module contains no DOM manipulation - only pure functions that work with strings and data structures
 
+const defaultmodel="gpt-4o-nano"; // just for quick testing
+
 /**
  * Call OpenAI Chat Completions API
  * @param {string} apiKey - OpenAI API key
@@ -10,7 +12,7 @@
  */
 async function callOpenAI(apiKey, messages, opts = {}) {
   const body = {
-    model: opts.model || 'gpt-4o',
+    model: opts.model || defaultmodel,
     messages: messages,
     temperature: opts.temperature ?? 1,
     max_completion_tokens: typeof opts.max_tokens === 'number' ? opts.max_tokens : 1024,

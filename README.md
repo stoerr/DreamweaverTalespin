@@ -2,6 +2,8 @@
 
 Experiment to use AI to tell stories
 
+(CAUTION: in development, not exacty ready)
+
 ## Description
 A single-page client-side application that uses OpenAI's Chat Completions API to generate story outlines and chapters and uses the browser's Web Speech API to read chapters aloud.
 
