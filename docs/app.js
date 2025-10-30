@@ -7,6 +7,10 @@ const API_KEY_STORAGE = 'chatgpt_api_key';
 const STORY_PROMPT_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.storyprompt';
 // Store last selected voice
 const VOICE_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.voice';
+// Store TTS provider and OpenAI voice
+const TTS_PROVIDER_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.ttsprovider';
+const OPENAI_VOICE_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.openaivoice';
+const OPENAI_INSTRUCTIONS_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.openaiinstructions';
 
 // DOM elements
 const outlineSystemPromptInput = document.getElementById('outline-system-prompt');
@@ -24,6 +28,11 @@ const voiceSelect = document.getElementById('voice-select');
 const languageSelect = document.getElementById('language-select');
 const autoplayCheckbox = document.getElementById('autoplay');
 const storyExamplesSelect = document.getElementById('story-examples');
+// TTS provider controls (will be initialized on DOMContentLoaded)
+let ttsProviderSelect = document.getElementById('tts-provider');
+let openaiVoiceSelect = document.getElementById('openai-voice-select');
+let openaiVoiceContainer = document.getElementById('openai-voice-container');
+let openaiInstructionsSelect = document.getElementById('openai-instructions-select');
 
 // This array will be replaced with contents of ./prompts/storyprompt-examples.json if available
 let loadedExamples = [];
@@ -38,6 +47,10 @@ let isGenerating = false;
 let synth = window.speechSynthesis;
 let currentUtterance = null;
 let playingIndex = null;
+
+// OpenAI audio playback element (when using OpenAI TTS)
+let openaiAudio = null; // HTMLAudioElement
+let openaiAudioUrl = null; // object URL for current audio blob
 
 // Wake Lock object (null when not active)
 let wakeLock = null;
@@ -54,8 +67,9 @@ function getApiKey() {
 // Update play button enabled/disabled state depending on generation/speaking
 function updatePlayButtonState() {
     if (!playBtn) return;
-    // Disabled if currently generating or speech synthesis is speaking
-    playBtn.disabled = !!isGenerating || !!synth.speaking;
+    // Disabled if currently generating or speech synthesis is speaking or OpenAI audio playing
+    const openaiPlaying = openaiAudio && !openaiAudio.paused && !openaiAudio.ended;
+    playBtn.disabled = !!isGenerating || !!synth.speaking || !!openaiPlaying;
 }
 
 // Persist voice selection when user changes it
@@ -70,6 +84,15 @@ if (voiceSelect) {
 
 // Prompt for API key if not present; load default prompts; populate voices & languages
 window.addEventListener('DOMContentLoaded', async () => {
+    // Ensure TTS controls exist in the DOM (in case index.html wasn't updated)
+    ensureTTSControls();
+
+    // Re-bind elements (they might have been created dynamically above)
+    ttsProviderSelect = document.getElementById('tts-provider');
+    openaiVoiceSelect = document.getElementById('openai-voice-select');
+    openaiVoiceContainer = document.getElementById('openai-voice-container');
+    openaiInstructionsSelect = document.getElementById('openai-instructions-select');
+
     let apiKey = getApiKey();
     if (!apiKey) {
         const entered = prompt('Please enter your OpenAI API key (will be stored in localStorage at "chatgpt_api_key"):');
@@ -96,6 +119,21 @@ window.addEventListener('DOMContentLoaded', async () => {
         if (last && storyPromptInput) storyPromptInput.value = last;
     } catch (e) {
         console.warn('Could not read stored story prompt:', e);
+    }
+
+    // Restore TTS provider, OpenAI voice, and instructions selection
+    try {
+        const prov = localStorage.getItem(TTS_PROVIDER_STORAGE) || 'browser';
+        if (ttsProviderSelect) {
+            ttsProviderSelect.value = prov;
+            toggleOpenAIVoiceContainer(prov === 'openai');
+        }
+        const oa = localStorage.getItem(OPENAI_VOICE_STORAGE) || '';
+        if (openaiVoiceSelect && oa) openaiVoiceSelect.value = oa;
+        const instr = localStorage.getItem(OPENAI_INSTRUCTIONS_STORAGE) || '';
+        if (openaiInstructionsSelect && instr) openaiInstructionsSelect.value = instr;
+    } catch (e) {
+        console.warn('Could not restore TTS provider selection:', e);
     }
 
     // Populate examples dropdown
@@ -135,6 +173,37 @@ window.addEventListener('DOMContentLoaded', async () => {
                 } catch (e) {
                 }
             }, 400);
+        });
+    }
+
+    // TTS provider selection handling
+    if (ttsProviderSelect) {
+        ttsProviderSelect.addEventListener('change', () => {
+            const val = ttsProviderSelect.value;
+            toggleOpenAIVoiceContainer(val === 'openai');
+            try {
+                localStorage.setItem(TTS_PROVIDER_STORAGE, val);
+            } catch (e) {
+            }
+            updatePlayButtonState();
+        });
+    }
+
+    if (openaiVoiceSelect) {
+        openaiVoiceSelect.addEventListener('change', () => {
+            try {
+                localStorage.setItem(OPENAI_VOICE_STORAGE, openaiVoiceSelect.value || '');
+            } catch (e) {
+            }
+        });
+    }
+
+    if (openaiInstructionsSelect) {
+        openaiInstructionsSelect.addEventListener('change', () => {
+            try {
+                localStorage.setItem(OPENAI_INSTRUCTIONS_STORAGE, openaiInstructionsSelect.value || '');
+            } catch (e) {
+            }
         });
     }
 
@@ -294,6 +363,47 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// Return the currently selected language code (e.g., 'en', 'de') or null
+function getLanguageCode() {
+    try {
+        const v = (languageSelect && languageSelect.value) || '';
+        return v ? v : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+// Show/hide OpenAI voice container based on TTS provider selection
+function toggleOpenAIVoiceContainer(show) {
+    if (!openaiVoiceContainer) return;
+    if (show) openaiVoiceContainer.classList.remove('d-none');
+    else openaiVoiceContainer.classList.add('d-none');
+}
+
+// Truncate text to max 4096 characters, ending at the last complete sentence
+function truncateToSentence(text, maxLength = 4096) {
+    if (text.length <= maxLength) return text;
+
+    // Find the last sentence-ending punctuation before the limit
+    const truncated = text.substring(0, maxLength);
+    const sentenceEnders = ['. ', '! ', '? ', '.\n', '!\n', '?\n'];
+
+    let lastSentenceEnd = -1;
+    for (const ender of sentenceEnders) {
+        const pos = truncated.lastIndexOf(ender);
+        if (pos > lastSentenceEnd) {
+            lastSentenceEnd = pos + ender.length - 1; // Include the punctuation but not the space/newline
+        }
+    }
+
+    // If no sentence ending found, just cut at maxLength
+    if (lastSentenceEnd === -1) {
+        return truncated;
+    }
+
+    return text.substring(0, lastSentenceEnd + 1);
 }
 
 // Request a screen wake lock to keep the display on (works on supported Android browsers)
@@ -611,14 +721,40 @@ playBtn.addEventListener('click', async () => {
 });
 
 pauseBtn.addEventListener('click', () => {
-    if (synth.speaking) {
-        if (synth.paused) synth.resume();
-        else synth.pause();
+    const provider = (ttsProviderSelect && ttsProviderSelect.value) || 'browser';
+    if (provider === 'openai') {
+        if (openaiAudio) {
+            if (openaiAudio.paused) openaiAudio.play();
+            else openaiAudio.pause();
+        }
+    } else {
+        if (synth.speaking) {
+            if (synth.paused) synth.resume();
+            else synth.pause();
+        }
     }
 });
 
 stopBtn.addEventListener('click', async () => {
-    synth.cancel();
+    // Stop both possible playback mechanisms
+    try {
+        synth.cancel();
+    } catch (e) {
+        // ignore
+    }
+    if (openaiAudio) {
+        try {
+            openaiAudio.pause();
+            openaiAudio.currentTime = 0;
+        } catch (e) {
+        }
+        if (openaiAudioUrl) {
+            try { URL.revokeObjectURL(openaiAudioUrl); } catch (e) {}
+            openaiAudioUrl = null;
+        }
+        openaiAudio = null;
+    }
+
     currentUtterance = null;
     playingIndex = null;
     // Release wake lock when stopping playback
@@ -631,6 +767,15 @@ stopBtn.addEventListener('click', async () => {
 });
 
 function speakChapter(idx) {
+    const provider = (ttsProviderSelect && ttsProviderSelect.value) || 'browser';
+    if (provider === 'openai') {
+        speakChapterWithOpenAI(idx);
+    } else {
+        speakChapterWithBrowser(idx);
+    }
+}
+
+function speakChapterWithBrowser(idx) {
     const item = outline[idx];
     if (!item || !item.chapterText) return;
 
@@ -719,4 +864,229 @@ function speakChapter(idx) {
     currentUtterance = utter;
     updatePlayButtonState();
     synth.speak(utter);
+}
+
+async function speakChapterWithOpenAI(idx) {
+    const item = outline[idx];
+    if (!item || !item.chapterText) return;
+
+    // stop browser synth if running
+    try { synth.cancel(); } catch (e) {}
+
+    // highlight the chapter being spoken
+    selectOutlineIndex(idx);
+
+    const apiKey = getApiKey();
+    if (!apiKey) {
+        const entered = prompt('OpenAI API key not found. Please enter it:');
+        if (entered) setApiKey(entered.trim());
+    }
+    const key = getApiKey();
+    if (!key) {
+        showError('OpenAI API key required for OpenAI TTS');
+        return;
+    }
+
+    const voice = (openaiVoiceSelect && openaiVoiceSelect.value) || 'alloy';
+    const instructions = (openaiInstructionsSelect && openaiInstructionsSelect.value) || '';
+
+    try {
+        // Truncate text to 4096 characters at last sentence boundary
+        const text = truncateToSentence(item.chapterText, 4096);
+        if (text.length < item.chapterText.length) {
+            console.warn(`Chapter text truncated from ${item.chapterText.length} to ${text.length} characters`);
+        }
+
+        showMessageInChapterContainer(`<h4>${escapeHtml(item.title)}</h4><div class="placeholder">Fetching audio from OpenAI…</div>`);
+        const buffer = await fetchOpenAITTS(text, voice, instructions, key);
+        if (!buffer) {
+            throw new Error('No audio returned from OpenAI');
+        }
+
+        // create blob and object URL
+        const blob = new Blob([buffer], {type: 'audio/mpeg'});
+        if (openaiAudioUrl) {
+            try { URL.revokeObjectURL(openaiAudioUrl); } catch (e) {}
+            openaiAudioUrl = null;
+        }
+        openaiAudioUrl = URL.createObjectURL(blob);
+        if (openaiAudio) {
+            try { openaiAudio.pause(); } catch (e) {}
+            openaiAudio = null;
+        }
+        openaiAudio = new Audio(openaiAudioUrl);
+        openaiAudio.crossOrigin = 'anonymous';
+
+        openaiAudio.onplay = () => updatePlayButtonState();
+        openaiAudio.onpause = () => updatePlayButtonState();
+        openaiAudio.onerror = (e) => console.error('OpenAI audio playback error', e);
+        openaiAudio.onended = () => {
+            playingIndex = idx + 1;
+            updatePlayButtonState();
+            if (playingIndex < outline.length) {
+                if (autoplayCheckbox && !autoplayCheckbox.checked) return;
+                if (outline[playingIndex].chapterText) {
+                    setTimeout(() => speakChapter(playingIndex), 200);
+                } else {
+                    generateChapter(playingIndex, true).then(() => speakChapter(playingIndex)).catch(err => console.error('Failed to generate next chapter for playback', err));
+                }
+            } else {
+                try { releaseWakeLock(); } catch (e) {}
+                playingIndex = null;
+            }
+        };
+
+        // start playback
+        updatePlayButtonState();
+        await openaiAudio.play();
+    } catch (err) {
+        console.error('OpenAI TTS error', err);
+        showError('OpenAI TTS failed: ' + (err && err.message ? err.message : String(err)));
+    }
+}
+
+async function fetchOpenAITTS(text, voice, instructions, apiKey) {
+    // Call OpenAI TTS endpoint - return ArrayBuffer of audio (MP3)
+    const payload = {
+        model: 'gpt-4o-mini-tts',
+        voice: voice,
+        input: text
+    };
+
+    // Add instructions if provided
+    if (instructions) {
+        payload.instructions = instructions;
+    }
+
+    const resp = await fetch('https://api.openai.com/v1/audio/speech', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify(payload)
+    });
+
+    if (!resp.ok) {
+        const textErr = await resp.text();
+        let msg = `OpenAI TTS error ${resp.status}: ${resp.statusText}`;
+        try {
+            const json = JSON.parse(textErr);
+            msg = json.error?.message || msg;
+        } catch (e) {
+        }
+        throw new Error(msg + '\n' + textErr);
+    }
+
+    return await resp.arrayBuffer();
+}
+
+// Insert TTS provider and OpenAI voice controls into the Playback card if missing
+function ensureTTSControls() {
+    try {
+        if (document.getElementById('tts-provider')) return; // already present
+
+        // Find the playback card-body by searching for a card with h5 text 'Playback'
+        const cardBodies = Array.from(document.querySelectorAll('.card .card-body'));
+        let playbackBody = null;
+        for (const b of cardBodies) {
+            const h5 = b.querySelector('h5.card-title');
+            if (h5 && (h5.textContent || '').trim().toLowerCase() === 'playback') {
+                playbackBody = b;
+                break;
+            }
+        }
+        if (!playbackBody) return;
+
+        // Create provider select
+        const provDiv = document.createElement('div');
+        provDiv.className = 'mb-3';
+        const provLabel = document.createElement('label');
+        provLabel.htmlFor = 'tts-provider';
+        provLabel.className = 'form-label';
+        provLabel.textContent = 'TTS Provider';
+        const provSelect = document.createElement('select');
+        provSelect.id = 'tts-provider';
+        provSelect.className = 'form-select';
+        const optBrowser = document.createElement('option');
+        optBrowser.value = 'browser';
+        optBrowser.textContent = 'Browser (Web Speech API)';
+        const optOpenAI = document.createElement('option');
+        optOpenAI.value = 'openai';
+        optOpenAI.textContent = 'OpenAI (gpt-4o-mini-tts)';
+        provSelect.appendChild(optBrowser);
+        provSelect.appendChild(optOpenAI);
+        provDiv.appendChild(provLabel);
+        provDiv.appendChild(provSelect);
+
+        // Insert provider select before the existing voice-select (if present) or at end
+        const existingVoice = playbackBody.querySelector('#voice-select');
+        if (existingVoice && existingVoice.parentElement) {
+            existingVoice.parentElement.insertBefore(provDiv, existingVoice.parentElement.firstChild);
+        } else {
+            playbackBody.appendChild(provDiv);
+        }
+
+        // Create OpenAI voice container
+        const oaDiv = document.createElement('div');
+        oaDiv.id = 'openai-voice-container';
+        oaDiv.className = 'mt-3 d-none';
+
+        // Voice select
+        const oaLabel = document.createElement('label');
+        oaLabel.htmlFor = 'openai-voice-select';
+        oaLabel.className = 'form-label';
+        oaLabel.textContent = 'OpenAI Voice';
+        const oaSelect = document.createElement('select');
+        oaSelect.id = 'openai-voice-select';
+        oaSelect.className = 'form-select mb-3';
+        const voices = ['alloy','ash','ballad','coral','echo','fable','nova','onyx','sage','shimmer'];
+        for (const v of voices) {
+            const o = document.createElement('option');
+            o.value = v;
+            o.textContent = v;
+            oaSelect.appendChild(o);
+        }
+
+        // Instructions select
+        const instrLabel = document.createElement('label');
+        instrLabel.htmlFor = 'openai-instructions-select';
+        instrLabel.className = 'form-label';
+        instrLabel.textContent = 'Voice Instructions';
+        const instrSelect = document.createElement('select');
+        instrSelect.id = 'openai-instructions-select';
+        instrSelect.className = 'form-select';
+
+        const instrOptions = [
+            { value: '', label: 'Default' },
+            { value: 'Speak in a calm, soothing whisper-tone, very softly and slowly, with long gentle pauses between sentences. Convey a restful, dreamy mood, as if telling a quiet bedtime story.', label: 'Good night story' },
+            { value: 'Speak in an animated, warm, and engaging storyteller voice. Use a medium-pace tempo, clear enunciation, lively inflection, occasional dramatic pauses, and convey a tone of friendly intrigue and enjoyment. Use vocal variation to depict emotions, scene changes, or characters\' moods.', label: 'Story teller' }
+        ];
+
+        for (const opt of instrOptions) {
+            const o = document.createElement('option');
+            o.value = opt.value;
+            o.textContent = opt.label;
+            instrSelect.appendChild(o);
+        }
+
+        const hint = document.createElement('div');
+        hint.className = 'form-text';
+        hint.textContent = 'OpenAI TTS with gpt-4o-mini-tts. Text limited to 4096 chars.';
+
+        oaDiv.appendChild(oaLabel);
+        oaDiv.appendChild(oaSelect);
+        oaDiv.appendChild(instrLabel);
+        oaDiv.appendChild(instrSelect);
+        oaDiv.appendChild(hint);
+
+        // Insert after voice select if present
+        if (existingVoice && existingVoice.parentElement) {
+            existingVoice.parentElement.appendChild(oaDiv);
+        } else {
+            playbackBody.appendChild(oaDiv);
+        }
+    } catch (e) {
+        console.warn('Could not inject TTS controls:', e);
+    }
 }

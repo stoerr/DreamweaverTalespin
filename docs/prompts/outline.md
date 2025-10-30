@@ -1,4 +1,4 @@
-You are an assistant that creates a story outline with the following structure:
+You are an assistant that creates a story outline as JSON with the following structure:
 - A title for the book
 - A subtitle for the book
 - A short description of the book (2-3 sentences)

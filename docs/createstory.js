@@ -15,7 +15,7 @@ async function callOpenAI(apiKey, messages, opts = {}) {
         model: opts.model || defaultmodel,
         messages: messages,
         temperature: opts.temperature ?? 1,
-        max_completion_tokens: typeof opts.max_tokens === 'number' ? opts.max_tokens : 1024,
+        max_completion_tokens: typeof opts.max_tokens === 'number' ? opts.max_tokens : 10240,
     };
 
     // Add response_format if specified (for JSON mode)
