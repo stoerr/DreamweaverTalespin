@@ -421,13 +421,16 @@ async function generateChapter(idx, foreground = true) {
     const languageCode = getLanguageCode();
     // Get prior chapters (all chapters before the current index)
     const priorChapters = outline.slice(0, idx);
-    
-    const resp = await window.StoryGenerator.generateChapter(
+    const storyPrompt = (storyPromptInput && storyPromptInput.value || '').trim();
+
+
+      const resp = await window.StoryGenerator.generateChapter(
       apiKey,
       item,
       systemPrompt,
       priorChapters,
-      languageCode
+      languageCode,
+      storyPrompt
     );
 
     item.chapterText = resp;

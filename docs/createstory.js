@@ -1,7 +1,7 @@
 // Business logic and AI access for story generation
 // This module contains no DOM manipulation - only pure functions that work with strings and data structures
 
-const defaultmodel="gpt-4o-nano"; // just for quick testing
+const defaultmodel="gpt-4o-mini"; // just for quick testing
 
 /**
  * Call OpenAI Chat Completions API
@@ -23,26 +23,29 @@ async function callOpenAI(apiKey, messages, opts = {}) {
     body.response_format = opts.response_format;
   }
 
-  const resp = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
+    let request = {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+    };
+    const resp = await fetch('https://api.openai.com/v1/chat/completions', request);
 
   if (!resp.ok) {
     const text = await resp.text();
-    let msg = `Error ${resp.status}`;
+    let msg = `Error ${resp.status} : ${resp.statusText}, OpenAI response: ${text}`;
     try {
       const json = JSON.parse(text);
       msg = json.error?.message || msg;
     } catch {}
+      console.error('OpenAI API error', msg, resp, request);
     throw new Error(msg);
   }
 
   const json = await resp.json();
+  console.log('AI call', body, json);
   const content = json.choices?.[0]?.message?.content;
   if (typeof content !== 'string') throw new Error('Invalid response from OpenAI');
 
@@ -105,7 +108,7 @@ function parseOutline(text) {
  * @returns {string|null} - Language instruction text or null
  */
 function getLanguageInstruction(languageCode) {
-  if (!languageCode) return null;
+  if (!languageCode) return '';
   // crude mapping for display name
   const map = { en: 'English', de: 'German', fr: 'French', es: 'Spanish' };
   const name = map[languageCode] || languageCode;
@@ -120,12 +123,13 @@ function getLanguageInstruction(languageCode) {
  * @param {string|null} languageCode - Optional language code
  * @returns {Promise<{title: string|null, chapters: Array<{title: string, description: string, details: string, chapterText: null}>}>} - Generated outline with title
  */
-async function generateOutline(apiKey, storyPrompt, systemPrompt, languageCode = null) {
+async function generateOutline(apiKey, storyPrompt, systemPrompt, languageCode = null, storyPrompt) {
   const messages = [];
   const langInstr = getLanguageInstruction(languageCode);
-  if (langInstr) messages.push({ role: 'system', content: langInstr });
 
-  messages.push({ role: 'system', content: systemPrompt });
+  messages.push({ role: 'system', content: systemPrompt +
+          '\n\n' + 'Prompt for the story in general: ' + storyPrompt +
+          '\n\n'+ langInstr });
   messages.push({ role: 'user', content: storyPrompt });
 
   // Define JSON Schema for structured output
