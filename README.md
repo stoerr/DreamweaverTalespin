@@ -1,8 +1,11 @@
 # Dreamweaver Talespin
 
-Experiment to use AI to tell stories
+An experiment to use AI to tell stories. This is the revival of my GPT 
+[Dreamweaver Talespin](https://www.stoerr.net/blog/2023-12-28-GPT-dreamweaver-talespin.html)
+but on steroids. Mostly vibe coded so that I can focus on the - for me - most interesting parts: 
+prompt / context engineering, AI usage.
 
-(CAUTION: in development, not exacty ready)
+(CAUTION: in development, not exacty ready yet. Also, you'll need an OpenAI API key to use it.)
 
 ## Description
 

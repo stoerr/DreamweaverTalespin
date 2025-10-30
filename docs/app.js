@@ -39,6 +39,9 @@ let synth = window.speechSynthesis;
 let currentUtterance = null;
 let playingIndex = null;
 
+// Wake Lock object (null when not active)
+let wakeLock = null;
+
 // Helpers: API key stored only in localStorage; UI input removed per request
 function setApiKey(key) {
     if (key) localStorage.setItem(API_KEY_STORAGE, key);
@@ -293,10 +296,49 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-function getLanguageCode() {
-    if (!languageSelect) return null;
-    return languageSelect.value || null;
+// Request a screen wake lock to keep the display on (works on supported Android browsers)
+async function requestWakeLock() {
+    if (!('wakeLock' in navigator)) return; // not supported
+    try {
+        // If already have one, don't re-request
+        if (wakeLock) return;
+        wakeLock = await navigator.wakeLock.request('screen');
+        console.log('Wake Lock acquired');
+        // If the lock is released by the UA (e.g., due to visibilitychange), clear reference
+        wakeLock.addEventListener('release', () => {
+            console.log('Wake Lock released by UA');
+            wakeLock = null;
+        });
+    } catch (err) {
+        console.warn('Could not acquire wake lock:', err && err.message ? err.message : err);
+        wakeLock = null;
+    }
 }
+
+// Release the wake lock if held
+async function releaseWakeLock() {
+    if (!wakeLock) return;
+    try {
+        await wakeLock.release();
+    } catch (err) {
+        console.warn('Error releasing wake lock:', err);
+    }
+    wakeLock = null;
+}
+
+// Try to re-request the wake lock if it was released when the page becomes visible again
+document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'visible') {
+        // attempt to re-acquire if speech is ongoing
+        if (synth.speaking) {
+            try {
+                await requestWakeLock();
+            } catch (e) {
+                // ignore
+            }
+        }
+    }
+});
 
 // Outline generation
 async function generateOutline(foreground = true) {
@@ -519,6 +561,13 @@ async function generateChapter(idx, foreground = true) {
 
 // Playback controls
 playBtn.addEventListener('click', async () => {
+    // Request wake lock before playing (best-effort)
+    try {
+        await requestWakeLock();
+    } catch (e) {
+        // ignore failures; playback should still proceed
+    }
+
     // If there's no outline yet, generate it first (foreground so user sees spinner)
     if (!outline.length) {
         try {
@@ -568,10 +617,16 @@ pauseBtn.addEventListener('click', () => {
     }
 });
 
-stopBtn.addEventListener('click', () => {
+stopBtn.addEventListener('click', async () => {
     synth.cancel();
     currentUtterance = null;
     playingIndex = null;
+    // Release wake lock when stopping playback
+    try {
+        await releaseWakeLock();
+    } catch (e) {
+        // ignore
+    }
     updatePlayButtonState();
 });
 
@@ -649,7 +704,12 @@ function speakChapter(idx) {
                 });
             }
         } else {
-            // finished all
+            // finished all - release wake lock
+            try {
+                releaseWakeLock();
+            } catch (e) {
+                // ignore
+            }
             playingIndex = null;
         }
     };
