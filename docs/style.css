@@ -190,6 +190,33 @@ footer {
     color: #666;
 }
 
+/* Activity log styling */
+#activity-log {
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    color: #212529;
+    resize: vertical;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+
+#activity-log::-webkit-scrollbar {
+    width: 8px;
+}
+
+#activity-log::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+#activity-log::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 4px;
+}
+
+#activity-log::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
 @media (max-width: 768px) {
     header h1 {
         font-size: 2em;

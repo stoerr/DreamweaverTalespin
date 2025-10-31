@@ -128,9 +128,10 @@ function getLanguageInstruction(languageCode) {
  * @param {string} storyPrompt - User's story idea
  * @param {string} systemPrompt - System prompt for outline generation
  * @param {string|null} languageCode - Optional language code
+ * @param {string|null} model - Optional model name (defaults to defaultmodel)
  * @returns {Promise<{title: string|null, subtitle: string|null, description: string|null, characters: Array<{name: string, description: string}>|null, chapters: Array<{title: string, description: string, details: string, chapterText: null}>}>} - Generated outline with title
  */
-async function generateOutline(apiKey, storyPrompt, systemPrompt, languageCode = null) {
+async function generateOutline(apiKey, storyPrompt, systemPrompt, languageCode = null, model = null) {
     const messages = [];
     const langInstr = getLanguageInstruction(languageCode);
 
@@ -209,7 +210,8 @@ async function generateOutline(apiKey, storyPrompt, systemPrompt, languageCode =
     };
 
     const text = await callOpenAI(apiKey, messages, {
-        response_format: responseFormat
+        response_format: responseFormat,
+        model: model || defaultmodel
     });
 
     return parseOutline(text);
@@ -224,9 +226,10 @@ async function generateOutline(apiKey, storyPrompt, systemPrompt, languageCode =
  * @param {string} storyPrompt - Original story prompt
  * @param {string|null} languageCode - Optional language code
  * @param {Object|null} bookMetadata - Book metadata {title: string, subtitle: string, description: string, characters: Array}
+ * @param {string|null} model - Optional model name (defaults to defaultmodel)
  * @returns {Promise<string>} - Generated chapter text
  */
-async function generateChapter(apiKey, chapterInfo, systemPrompt, priorChapters = [], storyPrompt, languageCode = null, bookMetadata = null) {
+async function generateChapter(apiKey, chapterInfo, systemPrompt, priorChapters = [], storyPrompt, languageCode = null, bookMetadata = null, model = null) {
     const messages = [];
     const langInstr = getLanguageInstruction(languageCode);
 
@@ -266,7 +269,9 @@ async function generateChapter(apiKey, chapterInfo, systemPrompt, priorChapters 
     }
     messages.push({role: 'user', content: userContent});
 
-    const response = await callOpenAI(apiKey, messages);
+    const response = await callOpenAI(apiKey, messages, {
+        model: model || defaultmodel
+    });
     return (response || '').trim();
 }
 

@@ -11,8 +11,10 @@ const VOICE_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.voice';
 const TTS_PROVIDER_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.ttsprovider';
 const OPENAI_VOICE_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.openaivoice';
 const OPENAI_INSTRUCTIONS_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.openaiinstructions';
+const MODEL_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.model';
 
 // DOM elements
+const modelSelect = document.getElementById('model-select');
 const outlineSystemPromptInput = document.getElementById('outline-system-prompt');
 const chapterSystemPromptInput = document.getElementById('chapter-system-prompt');
 const storyPromptInput = document.getElementById('story-prompt');
@@ -33,6 +35,25 @@ let ttsProviderSelect = document.getElementById('tts-provider');
 let openaiVoiceSelect = document.getElementById('openai-voice-select');
 let openaiVoiceContainer = document.getElementById('openai-voice-container');
 let openaiInstructionsSelect = document.getElementById('openai-instructions-select');
+const activityLog = document.getElementById('activity-log');
+
+// Activity logging helpers
+function logActivity(message) {
+    const timestamp = new Date().toLocaleTimeString();
+    const logMessage = `[${timestamp}] ${message}\n`;
+    if (activityLog) {
+        activityLog.value += logMessage;
+        // Auto-scroll to bottom
+        activityLog.scrollTop = activityLog.scrollHeight;
+    }
+    console.log(message);
+}
+
+function logError(message, error) {
+    const errorMsg = error ? `${message}: ${error.message || String(error)}` : message;
+    logActivity(`❌ ERROR: ${errorMsg}`);
+    console.error(message, error);
+}
 
 // This array will be replaced with contents of ./prompts/storyprompt-examples.json if available
 let loadedExamples = [];
@@ -97,6 +118,30 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (!apiKey) {
         const entered = prompt('Please enter your OpenAI API key (will be stored in localStorage at "chatgpt_api_key"):');
         if (entered) setApiKey(entered.trim());
+    }
+
+    logActivity('Application started');
+
+    // Restore model selection
+    try {
+        const storedModel = localStorage.getItem(MODEL_STORAGE);
+        if (storedModel && modelSelect) {
+            modelSelect.value = storedModel;
+        }
+    } catch (e) {
+        console.warn('Could not restore model selection:', e);
+    }
+
+    // Save model selection on change
+    if (modelSelect) {
+        modelSelect.addEventListener('change', () => {
+            try {
+                localStorage.setItem(MODEL_STORAGE, modelSelect.value || '');
+                logActivity(`Model changed to: ${modelSelect.value}`);
+            } catch (e) {
+                console.warn('Could not save model selection:', e);
+            }
+        });
     }
 
     // Load default system prompts from files
@@ -464,6 +509,7 @@ async function generateOutline(foreground = true) {
         if (!apiKey) {
             isGenerating = false;
             updatePlayButtonState();
+            logError('Outline generation cancelled: No API key');
             return;
         }
     }
@@ -473,6 +519,7 @@ async function generateOutline(foreground = true) {
         if (foreground) alert('Please enter the story prompt.');
         isGenerating = false;
         updatePlayButtonState();
+        logError('Outline generation cancelled: No story prompt');
         return;
     }
 
@@ -482,9 +529,12 @@ async function generateOutline(foreground = true) {
     generateOutlineBtn.disabled = true;
     if (foreground) showMessageInChapterContainer('<div class="d-flex align-items-center"><strong>Generating outline…</strong><div class="spinner-border ms-3" role="status" aria-hidden="true"></div></div>');
 
+    const selectedModel = (modelSelect && modelSelect.value) || 'gpt-5';
+    logActivity(`🎬 Starting outline generation with model: ${selectedModel}`);
+
     try {
         const languageCode = getLanguageCode();
-        const result = await window.StoryGenerator.generateOutline(apiKey, storyPrompt, systemPrompt, languageCode);
+        const result = await window.StoryGenerator.generateOutline(apiKey, storyPrompt, systemPrompt, languageCode, selectedModel);
         storyTitle = result.title;
         storySubtitle = result.subtitle;
         storyDescription = result.description;
@@ -492,9 +542,11 @@ async function generateOutline(foreground = true) {
         outline = result.chapters;
         renderOutline();
         if (foreground) showMessageInChapterContainer('<div class="placeholder">Outline generated. Select a chapter to generate it.</div>');
+        logActivity(`✅ Outline generated successfully: "${storyTitle}" with ${outline.length} chapters`);
         return outline;
     } catch (err) {
         console.error(err);
+        logError('Outline generation failed', err);
         if (foreground) showError('Failed to generate outline: ' + err.message);
         throw err;
     } finally {
@@ -506,6 +558,7 @@ async function generateOutline(foreground = true) {
 
 // wire the UI button
 generateOutlineBtn.addEventListener('click', async () => {
+    logActivity('📋 Generate Outline button pressed');
     try {
         await generateOutline(true);
     } catch (e) {
@@ -586,23 +639,31 @@ function selectOutlineIndex(idx) {
 generateChapterBtn.addEventListener('click', async () => {
     if (selectedIndex === null) {
         alert('Please select a chapter from the outline first.');
+        logActivity('❌ Generate chapter failed: No chapter selected');
         return;
     }
+    logActivity(`📝 Generate Selected Chapter button pressed for chapter ${selectedIndex + 1}`);
     await generateChapter(selectedIndex, true);
 });
 
 generateNextBgBtn.addEventListener('click', async () => {
     if (!outline.length) {
         alert('No outline available. Generate one first.');
+        logActivity('❌ Generate next in background failed: No outline');
         return;
     }
     const next = outline.findIndex((o) => !o.chapterText);
     if (next === -1) {
         alert('All chapters already generated.');
+        logActivity('ℹ️ All chapters already generated');
         return;
     }
+    logActivity(`🔄 Generate Next in Background button pressed for chapter ${next + 1}`);
     // start background generation
-    generateChapter(next, false).catch(err => console.error('Background generation failed', err));
+    generateChapter(next, false).catch(err => {
+        console.error('Background generation failed', err);
+        logError(`Background generation of chapter ${next + 1} failed`, err);
+    });
 });
 
 async function generateChapter(idx, foreground = true) {
@@ -617,6 +678,7 @@ async function generateChapter(idx, foreground = true) {
         if (!apiKey) {
             isGenerating = false;
             updatePlayButtonState();
+            logError('Chapter generation cancelled: No API key');
             return;
         }
     }
@@ -625,11 +687,16 @@ async function generateChapter(idx, foreground = true) {
     if (!item) {
         isGenerating = false;
         updatePlayButtonState();
+        logError(`Chapter generation failed: No item at index ${idx}`);
         return;
     }
 
     let systemPrompt = (chapterSystemPromptInput.value || '').trim();
     if (!systemPrompt) systemPrompt = 'You are an assistant that expands a chapter description into a full chapter. Keep it vivid and engaging.';
+
+    const selectedModel = (modelSelect && modelSelect.value) || 'gpt-5';
+    const mode = foreground ? 'foreground' : 'background';
+    logActivity(`📝 Starting chapter generation (${mode}): ${idx + 1}. "${item.title}" with model: ${selectedModel}`);
 
     if (foreground) showMessageInChapterContainer('<div class="d-flex align-items-center"><strong>Generating chapter…</strong><div class="spinner-border ms-3" role="status" aria-hidden="true"></div></div>');
 
@@ -654,15 +721,18 @@ async function generateChapter(idx, foreground = true) {
             priorChapters,
             storyPrompt,
             languageCode,
-            bookMetadata
+            bookMetadata,
+            selectedModel
         );
 
         item.chapterText = resp;
 
         if (selectedIndex === idx) selectOutlineIndex(idx);
+        logActivity(`✅ Chapter ${idx + 1} generated successfully (${mode}): "${item.title}"`);
         return resp;
     } catch (err) {
         console.error(err);
+        logError(`Chapter ${idx + 1} generation failed (${mode})`, err);
         if (foreground) showError('Failed to generate chapter: ' + err.message);
         throw err;
     } finally {
@@ -673,6 +743,7 @@ async function generateChapter(idx, foreground = true) {
 
 // Playback controls
 playBtn.addEventListener('click', async () => {
+    logActivity('▶️ Play button pressed');
     // Request wake lock before playing (best-effort)
     try {
         await requestWakeLock();
@@ -682,6 +753,7 @@ playBtn.addEventListener('click', async () => {
 
     // If there's no outline yet, generate it first (foreground so user sees spinner)
     if (!outline.length) {
+        logActivity('📋 No outline found, generating...');
         try {
             await generateOutline(true);
         } catch (e) {
@@ -707,6 +779,7 @@ playBtn.addEventListener('click', async () => {
     if (playingIndex >= outline.length) return;
 
     if (!outline[playingIndex] || !outline[playingIndex].chapterText) {
+        logActivity(`📝 Chapter ${playingIndex + 1} not generated, generating now...`);
         try {
             await generateChapter(playingIndex, true);
         } catch (e) {
@@ -718,11 +791,16 @@ playBtn.addEventListener('click', async () => {
     speakChapter(playingIndex);
     const nextIdx = playingIndex + 1;
     if (nextIdx < outline.length && !outline[nextIdx].chapterText) {
-        generateChapter(nextIdx, false).catch(err => console.error('Background generation failed', err));
+        logActivity(`🔄 Starting background generation for chapter ${nextIdx + 1}`);
+        generateChapter(nextIdx, false).catch(err => {
+            console.error('Background generation failed', err);
+            logError(`Background generation of chapter ${nextIdx + 1} failed`, err);
+        });
     }
 });
 
 pauseBtn.addEventListener('click', () => {
+    logActivity('⏸️ Pause/Resume button pressed');
     const provider = (ttsProviderSelect && ttsProviderSelect.value) || 'browser';
     if (provider === 'openai') {
         if (openaiAudio) {
@@ -738,6 +816,7 @@ pauseBtn.addEventListener('click', () => {
 });
 
 stopBtn.addEventListener('click', async () => {
+    logActivity('⏹️ Stop button pressed');
     // Stop both possible playback mechanisms
     try {
         synth.cancel();
@@ -786,6 +865,7 @@ function speakChapterWithBrowser(idx) {
 
     // highlight the chapter being spoken
     selectOutlineIndex(idx);
+    logActivity(`🔊 Speaking chapter ${idx + 1} with browser TTS: "${item.title}"`);
 
     const utter = new SpeechSynthesisUtterance(item.chapterText);
     const selectedVoiceValue = voiceSelect.value;
@@ -833,12 +913,13 @@ function speakChapterWithBrowser(idx) {
 
     utter.onend = () => {
         // when a chapter finishes, automatically play next (if exists)
+        logActivity(`✅ Finished speaking chapter ${idx + 1}: "${item.title}"`);
         playingIndex = idx + 1;
         updatePlayButtonState();
         if (playingIndex < outline.length) {
             // only autoplay if enabled
             if (autoplayCheckbox && !autoplayCheckbox.checked) {
-                // do nothing
+                logActivity(`⏸️ Autoplay disabled, stopping at chapter ${playingIndex}`);
                 return;
             }
             // ensure next is generated (generate in background if needed) and then speak it
@@ -846,12 +927,18 @@ function speakChapterWithBrowser(idx) {
                 // small timeout to allow background tasks to settle
                 setTimeout(() => speakChapter(playingIndex), 200);
             } else {
-                generateChapter(playingIndex, true).then(() => speakChapter(playingIndex)).catch(err => {
-                    console.error('Failed to generate next chapter for playback', err);
+                // Chapter not ready - wait for it to be generated
+                logActivity(`⏳ Waiting for chapter ${playingIndex + 1} to be generated...`);
+                generateChapter(playingIndex, true).then(() => {
+                    logActivity(`▶️ Continuing autoplay with chapter ${playingIndex + 1}`);
+                    speakChapter(playingIndex);
+                }).catch(err => {
+                    logError(`Failed to generate chapter ${playingIndex + 1} for autoplay`, err);
                 });
             }
         } else {
             // finished all - release wake lock
+            logActivity(`🎉 All chapters completed!`);
             try {
                 releaseWakeLock();
             } catch (e) {
@@ -861,7 +948,10 @@ function speakChapterWithBrowser(idx) {
         }
     };
 
-    utter.onerror = (e) => console.error('Speech error', e);
+    utter.onerror = (e) => {
+        logError(`Speech error on chapter ${idx + 1}`, e);
+        console.error('Speech error', e);
+    };
 
     currentUtterance = utter;
     updatePlayButtonState();
@@ -877,6 +967,7 @@ async function speakChapterWithOpenAI(idx) {
 
     // highlight the chapter being spoken
     selectOutlineIndex(idx);
+    logActivity(`🔊 Speaking chapter ${idx + 1} with OpenAI TTS: "${item.title}"`);
 
     const apiKey = getApiKey();
     if (!apiKey) {
@@ -886,6 +977,7 @@ async function speakChapterWithOpenAI(idx) {
     const key = getApiKey();
     if (!key) {
         showError('OpenAI API key required for OpenAI TTS');
+        logError('OpenAI TTS failed: No API key');
         return;
     }
 
@@ -897,6 +989,7 @@ async function speakChapterWithOpenAI(idx) {
         const text = truncateToSentence(item.chapterText, 4096);
         if (text.length < item.chapterText.length) {
             console.warn(`Chapter text truncated from ${item.chapterText.length} to ${text.length} characters`);
+            logActivity(`⚠️ Chapter ${idx + 1} text truncated from ${item.chapterText.length} to ${text.length} characters`);
         }
 
         showMessageInChapterContainer(`<h4>${escapeHtml(item.title)}</h4><div class="placeholder">Fetching audio from OpenAI…</div>`);
@@ -921,18 +1014,32 @@ async function speakChapterWithOpenAI(idx) {
 
         openaiAudio.onplay = () => updatePlayButtonState();
         openaiAudio.onpause = () => updatePlayButtonState();
-        openaiAudio.onerror = (e) => console.error('OpenAI audio playback error', e);
+        openaiAudio.onerror = (e) => {
+            logError(`OpenAI audio playback error on chapter ${idx + 1}`, e);
+            console.error('OpenAI audio playback error', e);
+        };
         openaiAudio.onended = () => {
+            logActivity(`✅ Finished speaking chapter ${idx + 1}: "${item.title}"`);
             playingIndex = idx + 1;
             updatePlayButtonState();
             if (playingIndex < outline.length) {
-                if (autoplayCheckbox && !autoplayCheckbox.checked) return;
+                if (autoplayCheckbox && !autoplayCheckbox.checked) {
+                    logActivity(`⏸️ Autoplay disabled, stopping at chapter ${playingIndex}`);
+                    return;
+                }
                 if (outline[playingIndex].chapterText) {
                     setTimeout(() => speakChapter(playingIndex), 200);
                 } else {
-                    generateChapter(playingIndex, true).then(() => speakChapter(playingIndex)).catch(err => console.error('Failed to generate next chapter for playback', err));
+                    logActivity(`⏳ Waiting for chapter ${playingIndex + 1} to be generated...`);
+                    generateChapter(playingIndex, true).then(() => {
+                        logActivity(`▶️ Continuing autoplay with chapter ${playingIndex + 1}`);
+                        speakChapter(playingIndex);
+                    }).catch(err => {
+                        logError(`Failed to generate chapter ${playingIndex + 1} for autoplay`, err);
+                    });
                 }
             } else {
+                logActivity(`🎉 All chapters completed!`);
                 try { releaseWakeLock(); } catch (e) {}
                 playingIndex = null;
             }
@@ -943,6 +1050,7 @@ async function speakChapterWithOpenAI(idx) {
         await openaiAudio.play();
     } catch (err) {
         console.error('OpenAI TTS error', err);
+        logError('OpenAI TTS failed', err);
         showError('OpenAI TTS failed: ' + (err && err.message ? err.message : String(err)));
     }
 }
