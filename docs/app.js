@@ -31,6 +31,7 @@ const chapterContainer = document.getElementById('chapter-container');
 const playBtn = document.getElementById('play-btn');
 const pauseBtn = document.getElementById('pause-btn');
 const stopBtn = document.getElementById('stop-btn');
+const copyStoryBtn = document.getElementById('copy-story-btn');
 const voiceSelect = document.getElementById('voice-select');
 const languageSelect = document.getElementById('language-select');
 const autoplayCheckbox = document.getElementById('autoplay');
@@ -996,6 +997,79 @@ stopBtn.addEventListener('click', async () => {
         // ignore
     }
     updatePlayButtonState();
+});
+
+// Copy whole story to clipboard
+copyStoryBtn.addEventListener('click', async () => {
+    logActivity('📋 Copy Whole Story button pressed');
+
+    if (!outline.length) {
+        alert('No story to copy. Generate an outline first.');
+        logActivity('❌ Copy failed: No outline available');
+        return;
+    }
+
+    // Build the complete story text
+    let storyText = '';
+
+    // Add title and metadata if available
+    if (storyTitle) {
+        storyText += `${storyTitle}\n`;
+        if (storySubtitle) {
+            storyText += `${storySubtitle}\n`;
+        }
+        storyText += '\n';
+    }
+
+    if (storyDescription) {
+        storyText += `${storyDescription}\n\n`;
+    }
+
+    if (storyCharacters && storyCharacters.length) {
+        storyText += 'Main Characters:\n';
+        storyCharacters.forEach(char => {
+            storyText += `• ${char.name}: ${char.description}\n`;
+        });
+        storyText += '\n';
+    }
+
+    storyText += '═'.repeat(60) + '\n\n';
+
+    // Add all chapters
+    let chaptersWithText = 0;
+    outline.forEach((chapter, idx) => {
+        storyText += `Chapter ${idx + 1}: ${chapter.title}\n\n`;
+        if (chapter.chapterText) {
+            storyText += `${chapter.chapterText}\n\n`;
+            storyText += '─'.repeat(60) + '\n\n';
+            chaptersWithText++;
+        } else {
+            storyText += `[Not yet generated]\n\n`;
+            storyText += '─'.repeat(60) + '\n\n';
+        }
+    });
+
+    // Copy to clipboard
+    try {
+        await navigator.clipboard.writeText(storyText);
+        logActivity(`✅ Story copied to clipboard (${chaptersWithText}/${outline.length} chapters generated)`);
+
+        // Visual feedback
+        const originalText = copyStoryBtn.textContent;
+        copyStoryBtn.textContent = '✓ Copied!';
+        copyStoryBtn.classList.add('btn-success');
+        copyStoryBtn.classList.remove('btn-outline-secondary');
+
+        setTimeout(() => {
+            copyStoryBtn.textContent = originalText;
+            copyStoryBtn.classList.remove('btn-success');
+            copyStoryBtn.classList.add('btn-outline-secondary');
+        }, 2000);
+    } catch (err) {
+        console.error('Failed to copy to clipboard:', err);
+        logError('Failed to copy story to clipboard', err);
+        alert('Failed to copy to clipboard. Please check browser permissions.');
+    }
 });
 
 function speakChapter(idx) {
