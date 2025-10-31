@@ -71,6 +71,8 @@ let storyDescription = null; // Book description from outline generation
 let storyCharacters = null; // Main characters from outline generation (array of {name, description})
 let selectedIndex = null;
 let isGenerating = false;
+let generatingChapterIndex = null; // Track which chapter is being generated
+let chapterGenerationPromise = null; // Promise for the current chapter generation
 let synth = window.speechSynthesis;
 let currentUtterance = null;
 let playingIndex = null;
@@ -818,79 +820,100 @@ generateNextBgBtn.addEventListener('click', async () => {
 });
 
 async function generateChapter(idx, foreground = true) {
-    if (isGenerating) return;
-    isGenerating = true;
-    updatePlayButtonState();
-    let apiKey = getApiKey();
-    if (!apiKey) {
-        const entered = prompt('OpenAI API key not found. Please enter it:');
-        if (entered) setApiKey(entered.trim());
-        apiKey = getApiKey();
-        if (!apiKey) {
-            isGenerating = false;
-            updatePlayButtonState();
-            logError('Chapter generation cancelled: No API key');
-            return;
-        }
+    // If this exact chapter is already being generated, return the existing promise
+    if (generatingChapterIndex === idx && chapterGenerationPromise) {
+        logActivity(`⏳ Chapter ${idx + 1} generation already in progress, waiting...`);
+        return chapterGenerationPromise;
     }
 
-    const item = outline[idx];
-    if (!item) {
-        isGenerating = false;
-        updatePlayButtonState();
-        logError(`Chapter generation failed: No item at index ${idx}`);
+    if (isGenerating) {
+        logActivity(`⚠️ Another chapter is being generated, please wait...`);
         return;
     }
 
-    let systemPrompt = (chapterSystemPromptInput.value || '').trim();
-    if (!systemPrompt) systemPrompt = 'You are an assistant that expands a chapter description into a full chapter. Keep it vivid and engaging.';
+    isGenerating = true;
+    generatingChapterIndex = idx;
+    updatePlayButtonState();
 
-    const selectedModel = (modelSelect && modelSelect.value) || 'gpt-5';
-    const mode = foreground ? 'foreground' : 'background';
-    logActivity(`📝 Starting chapter generation (${mode}): ${idx + 1}. "${item.title}" with model: ${selectedModel}`);
+    // Create the generation promise
+    chapterGenerationPromise = (async () => {
+        let apiKey = getApiKey();
+        if (!apiKey) {
+            const entered = prompt('OpenAI API key not found. Please enter it:');
+            if (entered) setApiKey(entered.trim());
+            apiKey = getApiKey();
+            if (!apiKey) {
+                isGenerating = false;
+                generatingChapterIndex = null;
+                updatePlayButtonState();
+                logError('Chapter generation cancelled: No API key');
+                return;
+            }
+        }
 
-    if (foreground) showMessageInChapterContainer('<div class="d-flex align-items-center"><strong>Generating chapter…</strong><div class="spinner-border ms-3" role="status" aria-hidden="true"></div></div>');
+        const item = outline[idx];
+        if (!item) {
+            isGenerating = false;
+            generatingChapterIndex = null;
+            updatePlayButtonState();
+            logError(`Chapter generation failed: No item at index ${idx}`);
+            return;
+        }
 
-    try {
-        const languageCode = getLanguageCode();
-        // Get prior chapters (all chapters before the current index)
-        const priorChapters = outline.slice(0, idx);
-        const storyPrompt = (storyPromptInput && storyPromptInput.value || '').trim();
+        let systemPrompt = (chapterSystemPromptInput.value || '').trim();
+        if (!systemPrompt) systemPrompt = 'You are an assistant that expands a chapter description into a full chapter. Keep it vivid and engaging.';
 
-        // Prepare book metadata
-        const bookMetadata = {
-            title: storyTitle,
-            subtitle: storySubtitle,
-            description: storyDescription,
-            characters: storyCharacters
-        };
+        const selectedModel = (modelSelect && modelSelect.value) || 'gpt-5';
+        const mode = foreground ? 'foreground' : 'background';
+        logActivity(`📝 Starting chapter generation (${mode}): ${idx + 1}. "${item.title}" with model: ${selectedModel}`);
 
-        const resp = await window.StoryGenerator.generateChapter(
-            apiKey,
-            item,
-            systemPrompt,
-            priorChapters,
-            storyPrompt,
-            languageCode,
-            bookMetadata,
-            selectedModel
-        );
+        if (foreground) showMessageInChapterContainer('<div class="d-flex align-items-center"><strong>Generating chapter…</strong><div class="spinner-border ms-3" role="status" aria-hidden="true"></div></div>');
 
-        item.chapterText = resp;
+        try {
+            const languageCode = getLanguageCode();
+            // Get prior chapters (all chapters before the current index)
+            const priorChapters = outline.slice(0, idx);
+            const storyPrompt = (storyPromptInput && storyPromptInput.value || '').trim();
 
-        if (selectedIndex === idx) selectOutlineIndex(idx);
-        logActivity(`✅ Chapter ${idx + 1} generated successfully (${mode}): "${item.title}"`);
-        saveStoryState(); // Save after successful generation
-        return resp;
-    } catch (err) {
-        console.error(err);
-        logError(`Chapter ${idx + 1} generation failed (${mode})`, err);
-        if (foreground) showError('Failed to generate chapter: ' + err.message);
-        throw err;
-    } finally {
-        isGenerating = false;
-        updatePlayButtonState();
-    }
+            // Prepare book metadata
+            const bookMetadata = {
+                title: storyTitle,
+                subtitle: storySubtitle,
+                description: storyDescription,
+                characters: storyCharacters
+            };
+
+            const resp = await window.StoryGenerator.generateChapter(
+                apiKey,
+                item,
+                systemPrompt,
+                priorChapters,
+                storyPrompt,
+                languageCode,
+                bookMetadata,
+                selectedModel
+            );
+
+            item.chapterText = resp;
+
+            if (selectedIndex === idx) selectOutlineIndex(idx);
+            logActivity(`✅ Chapter ${idx + 1} generated successfully (${mode}): "${item.title}"`);
+            saveStoryState(); // Save after successful generation
+            return resp;
+        } catch (err) {
+            console.error(err);
+            logError(`Chapter ${idx + 1} generation failed (${mode})`, err);
+            if (foreground) showError('Failed to generate chapter: ' + err.message);
+            throw err;
+        } finally {
+            isGenerating = false;
+            generatingChapterIndex = null;
+            chapterGenerationPromise = null;
+            updatePlayButtonState();
+        }
+    })();
+
+    return chapterGenerationPromise;
 }
 
 // Playback controls

@@ -4,6 +4,7 @@
   most important and authoritative for the requirements.
 - Do not run the server yourself, also not for testing. Let the user run it at the end. Do not try to test yourself
   except if explicitly told to do so.
+- Do not generate a summary file afterwards.
 
 ## Quick start & app overview (for coding agents)
 
