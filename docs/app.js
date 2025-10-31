@@ -12,6 +12,10 @@ const TTS_PROVIDER_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.ttspr
 const OPENAI_VOICE_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.openaivoice';
 const OPENAI_INSTRUCTIONS_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.openaiinstructions';
 const MODEL_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.model';
+// Store the complete story state (outline, chapters, metadata)
+const STORY_STATE_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.storystate';
+// Store settings (autoplay, language, system prompts)
+const SETTINGS_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.settings';
 
 // DOM elements
 const modelSelect = document.getElementById('model-select');
@@ -19,6 +23,7 @@ const outlineSystemPromptInput = document.getElementById('outline-system-prompt'
 const chapterSystemPromptInput = document.getElementById('chapter-system-prompt');
 const storyPromptInput = document.getElementById('story-prompt');
 const generateOutlineBtn = document.getElementById('generate-outline');
+const newStoryBtn = document.getElementById('new-story');
 const outlineList = document.getElementById('outline-list');
 const generateChapterBtn = document.getElementById('generate-chapter');
 const generateNextBgBtn = document.getElementById('generate-next-bg');
@@ -85,6 +90,114 @@ function getApiKey() {
     return localStorage.getItem(API_KEY_STORAGE) || null;
 }
 
+// Save complete story state to localStorage
+function saveStoryState() {
+    try {
+        const state = {
+            outline: outline,
+            storyTitle: storyTitle,
+            storySubtitle: storySubtitle,
+            storyDescription: storyDescription,
+            storyCharacters: storyCharacters,
+            selectedIndex: selectedIndex,
+            timestamp: Date.now()
+        };
+        localStorage.setItem(STORY_STATE_STORAGE, JSON.stringify(state));
+        logActivity('💾 Story state saved to local storage');
+    } catch (e) {
+        console.warn('Could not save story state:', e);
+        logError('Failed to save story state', e);
+    }
+}
+
+// Load story state from localStorage
+function loadStoryState() {
+    try {
+        const stored = localStorage.getItem(STORY_STATE_STORAGE);
+        if (!stored) return false;
+
+        const state = JSON.parse(stored);
+        outline = state.outline || [];
+        storyTitle = state.storyTitle || null;
+        storySubtitle = state.storySubtitle || null;
+        storyDescription = state.storyDescription || null;
+        storyCharacters = state.storyCharacters || null;
+        selectedIndex = state.selectedIndex || null;
+
+        renderOutline();
+        if (selectedIndex !== null && outline[selectedIndex]) {
+            selectOutlineIndex(selectedIndex);
+        } else if (outline.length > 0) {
+            showMessageInChapterContainer('<div class="placeholder">Story loaded. Select a chapter to view or generate.</div>');
+        }
+
+        const date = state.timestamp ? new Date(state.timestamp).toLocaleString() : 'unknown';
+        logActivity(`📂 Story state loaded from local storage (saved: ${date})`);
+        return true;
+    } catch (e) {
+        console.warn('Could not load story state:', e);
+        logError('Failed to load story state', e);
+        return false;
+    }
+}
+
+// Save settings to localStorage
+function saveSettings() {
+    try {
+        const settings = {
+            autoplay: autoplayCheckbox ? autoplayCheckbox.checked : true,
+            language: languageSelect ? languageSelect.value : '',
+            outlineSystemPrompt: outlineSystemPromptInput ? outlineSystemPromptInput.value : '',
+            chapterSystemPrompt: chapterSystemPromptInput ? chapterSystemPromptInput.value : ''
+        };
+        localStorage.setItem(SETTINGS_STORAGE, JSON.stringify(settings));
+    } catch (e) {
+        console.warn('Could not save settings:', e);
+    }
+}
+
+// Load settings from localStorage
+function loadSettings() {
+    try {
+        const stored = localStorage.getItem(SETTINGS_STORAGE);
+        if (!stored) return false;
+
+        const settings = JSON.parse(stored);
+        if (autoplayCheckbox && typeof settings.autoplay === 'boolean') {
+            autoplayCheckbox.checked = settings.autoplay;
+        }
+        if (languageSelect && settings.language) {
+            languageSelect.value = settings.language;
+        }
+        // System prompts will be loaded later from files, don't restore them
+        return true;
+    } catch (e) {
+        console.warn('Could not load settings:', e);
+        return false;
+    }
+}
+
+// Reset story (clear outline, chapters, and metadata)
+function resetStory() {
+    outline = [];
+    storyTitle = null;
+    storySubtitle = null;
+    storyDescription = null;
+    storyCharacters = null;
+    selectedIndex = null;
+    playingIndex = null;
+
+    renderOutline();
+    showMessageInChapterContainer('<div class="placeholder">Story reset. Generate a new outline to start.</div>');
+
+    try {
+        localStorage.removeItem(STORY_STATE_STORAGE);
+        logActivity('🗑️ Story reset - all chapters and outline cleared');
+    } catch (e) {
+        console.warn('Could not clear story state from storage:', e);
+    }
+}
+
 // Update play button enabled/disabled state depending on generation/speaking
 function updatePlayButtonState() {
     if (!playBtn) return;
@@ -121,6 +234,12 @@ window.addEventListener('DOMContentLoaded', async () => {
     }
 
     logActivity('Application started');
+
+    // Load saved story state if available
+    loadStoryState();
+
+    // Load saved settings
+    loadSettings();
 
     // Restore model selection
     try {
@@ -255,6 +374,13 @@ window.addEventListener('DOMContentLoaded', async () => {
     // Populate voices and language selector
     populateVoicesAndLanguages();
     window.speechSynthesis.onvoiceschanged = populateVoicesAndLanguages;
+
+    // Save settings when changed
+    if (autoplayCheckbox) {
+        autoplayCheckbox.addEventListener('change', () => {
+            saveSettings();
+        });
+    }
 
     // update play button state on load
     updatePlayButtonState();
@@ -393,6 +519,7 @@ function refreshVoiceSelect() {
 if (languageSelect) {
     languageSelect.addEventListener('change', () => {
         refreshVoiceSelect();
+        saveSettings();
     });
 }
 
@@ -543,6 +670,7 @@ async function generateOutline(foreground = true) {
         renderOutline();
         if (foreground) showMessageInChapterContainer('<div class="placeholder">Outline generated. Select a chapter to generate it.</div>');
         logActivity(`✅ Outline generated successfully: "${storyTitle}" with ${outline.length} chapters`);
+        saveStoryState(); // Save after successful generation
         return outline;
     } catch (err) {
         console.error(err);
@@ -563,6 +691,28 @@ generateOutlineBtn.addEventListener('click', async () => {
         await generateOutline(true);
     } catch (e) {
         // already shown by generateOutline
+    }
+});
+
+// New Story button - reset everything
+newStoryBtn.addEventListener('click', () => {
+    const confirmed = confirm('Are you sure you want to start a new story? This will clear the current outline and all generated chapters.');
+    if (confirmed) {
+        logActivity('🆕 New Story button pressed');
+        // Stop any ongoing playback
+        try {
+            synth.cancel();
+        } catch (e) {
+            // ignore
+        }
+        if (openaiAudio) {
+            try {
+                openaiAudio.pause();
+                openaiAudio.currentTime = 0;
+            } catch (e) {
+            }
+        }
+        resetStory();
     }
 });
 
@@ -729,6 +879,7 @@ async function generateChapter(idx, foreground = true) {
 
         if (selectedIndex === idx) selectOutlineIndex(idx);
         logActivity(`✅ Chapter ${idx + 1} generated successfully (${mode}): "${item.title}"`);
+        saveStoryState(); // Save after successful generation
         return resp;
     } catch (err) {
         console.error(err);
