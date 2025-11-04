@@ -16,6 +16,8 @@ const MODEL_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.model';
 const STORY_STATE_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.storystate';
 // Store settings (autoplay, language, system prompts)
 const SETTINGS_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.settings';
+// Store the current reading position (chapter index)
+const READING_POSITION_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.readingposition';
 
 // DOM elements
 const modelSelect = document.getElementById('model-select');
@@ -29,6 +31,7 @@ const generateChapterBtn = document.getElementById('generate-chapter');
 const generateNextBgBtn = document.getElementById('generate-next-bg');
 const chapterContainer = document.getElementById('chapter-container');
 const playBtn = document.getElementById('play-btn');
+const continueBtn = document.getElementById('continue-btn');
 const pauseBtn = document.getElementById('pause-btn');
 const stopBtn = document.getElementById('stop-btn');
 const copyStoryBtn = document.getElementById('copy-story-btn');
@@ -180,6 +183,62 @@ function loadSettings() {
     }
 }
 
+// Save reading position to localStorage
+function saveReadingPosition(chapterIndex, charIndex = 0) {
+    try {
+        const position = { chapter: chapterIndex, char: charIndex };
+        localStorage.setItem(READING_POSITION_STORAGE, JSON.stringify(position));
+        if (charIndex > 0) {
+            logActivity(`💾 Reading position saved: chapter ${chapterIndex + 1}, character ${charIndex}`);
+        } else {
+            logActivity(`💾 Reading position saved: chapter ${chapterIndex + 1}`);
+        }
+    } catch (e) {
+        console.warn('Could not save reading position:', e);
+    }
+}
+
+// Load reading position from localStorage
+function loadReadingPosition() {
+    try {
+        const stored = localStorage.getItem(READING_POSITION_STORAGE);
+        if (stored) {
+            // Try to parse as new format (object with chapter and char)
+            try {
+                const position = JSON.parse(stored);
+                if (typeof position === 'object' && position !== null &&
+                    typeof position.chapter === 'number' && position.chapter >= 0) {
+                    return {
+                        chapter: position.chapter,
+                        char: position.char || 0
+                    };
+                }
+            } catch (e) {
+                // Fall back to old format (just a number)
+            }
+
+            // Old format: just a chapter number
+            const pos = parseInt(stored, 10);
+            if (!isNaN(pos) && pos >= 0) {
+                return { chapter: pos, char: 0 };
+            }
+        }
+    } catch (e) {
+        console.warn('Could not load reading position:', e);
+    }
+    return null;
+}
+
+// Clear reading position from localStorage
+function clearReadingPosition() {
+    try {
+        localStorage.removeItem(READING_POSITION_STORAGE);
+        logActivity('🗑️ Reading position cleared');
+    } catch (e) {
+        console.warn('Could not clear reading position:', e);
+    }
+}
+
 // Reset story (clear outline, chapters, and metadata)
 function resetStory() {
     outline = [];
@@ -195,6 +254,7 @@ function resetStory() {
 
     try {
         localStorage.removeItem(STORY_STATE_STORAGE);
+        clearReadingPosition();
         logActivity('🗑️ Story reset - all chapters and outline cleared');
     } catch (e) {
         console.warn('Could not clear story state from storage:', e);
@@ -579,6 +639,27 @@ function truncateToSentence(text, maxLength = 4096) {
     }
 
     return text.substring(0, lastSentenceEnd + 1);
+}
+
+// Split text into chunks of approximately maxLength characters at sentence boundaries
+function splitTextIntoChunks(text, maxLength = 4096) {
+    if (text.length <= maxLength) return [text];
+
+    const chunks = [];
+    let remaining = text;
+
+    while (remaining.length > 0) {
+        if (remaining.length <= maxLength) {
+            chunks.push(remaining);
+            break;
+        }
+
+        const chunk = truncateToSentence(remaining, maxLength);
+        chunks.push(chunk);
+        remaining = remaining.substring(chunk.length).trimStart();
+    }
+
+    return chunks;
 }
 
 // Request a screen wake lock to keep the display on (works on supported Android browsers)
@@ -974,6 +1055,79 @@ playBtn.addEventListener('click', async () => {
     }
 });
 
+// Continue button - resume from saved reading position
+continueBtn.addEventListener('click', async () => {
+    logActivity('⏩ Continue button pressed');
+
+    // Request wake lock before playing (best-effort)
+    try {
+        await requestWakeLock();
+    } catch (e) {
+        // ignore failures; playback should still proceed
+    }
+
+    // Load saved reading position
+    const savedPosition = loadReadingPosition();
+
+    if (savedPosition === null) {
+        logActivity('⚠️ No saved reading position found, starting from beginning');
+        // Fall back to Play button behavior
+        playBtn.click();
+        return;
+    }
+
+    // If there's no outline yet, generate it first
+    if (!outline.length) {
+        logActivity('📋 No outline found, generating...');
+        try {
+            await generateOutline(true);
+        } catch (e) {
+            updatePlayButtonState();
+            return;
+        }
+        if (!outline.length) {
+            updatePlayButtonState();
+            return;
+        }
+    }
+
+    // Validate saved position
+    if (savedPosition.chapter >= outline.length) {
+        logActivity(`⚠️ Saved position (chapter ${savedPosition.chapter + 1}) is beyond current outline, starting from beginning`);
+        playingIndex = 0;
+    } else {
+        playingIndex = savedPosition.chapter;
+        if (savedPosition.char > 0) {
+            logActivity(`📖 Resuming from saved position: chapter ${playingIndex + 1}, character ${savedPosition.char}`);
+        } else {
+            logActivity(`📖 Resuming from saved position: chapter ${playingIndex + 1}`);
+        }
+    }
+
+    // disable play immediately while generation/prepare starts
+    playBtn.disabled = true;
+
+    if (!outline[playingIndex] || !outline[playingIndex].chapterText) {
+        logActivity(`📝 Chapter ${playingIndex + 1} not generated, generating now...`);
+        try {
+            await generateChapter(playingIndex, true);
+        } catch (e) {
+            updatePlayButtonState();
+            return;
+        }
+    }
+
+    speakChapter(playingIndex, savedPosition.char);
+    const nextIdx = playingIndex + 1;
+    if (nextIdx < outline.length && !outline[nextIdx].chapterText) {
+        logActivity(`🔄 Starting background generation for chapter ${nextIdx + 1}`);
+        generateChapter(nextIdx, false).catch(err => {
+            console.error('Background generation failed', err);
+            logError(`Background generation of chapter ${nextIdx + 1} failed`, err);
+        });
+    }
+});
+
 pauseBtn.addEventListener('click', () => {
     logActivity('⏸️ Pause/Resume button pressed');
     const provider = (ttsProviderSelect && ttsProviderSelect.value) || 'browser';
@@ -1095,16 +1249,16 @@ copyStoryBtn.addEventListener('click', async () => {
     }
 });
 
-function speakChapter(idx) {
+function speakChapter(idx, startChar = 0) {
     const provider = (ttsProviderSelect && ttsProviderSelect.value) || 'browser';
     if (provider === 'openai') {
-        speakChapterWithOpenAI(idx);
+        speakChapterWithOpenAI(idx, startChar);
     } else {
-        speakChapterWithBrowser(idx);
+        speakChapterWithBrowser(idx, startChar);
     }
 }
 
-function speakChapterWithBrowser(idx) {
+function speakChapterWithBrowser(idx, startChar = 0) {
     const item = outline[idx];
     if (!item || !item.chapterText) return;
 
@@ -1113,9 +1267,21 @@ function speakChapterWithBrowser(idx) {
 
     // highlight the chapter being spoken
     selectOutlineIndex(idx);
-    logActivity(`🔊 Speaking chapter ${idx + 1} with browser TTS: "${item.title}"`);
 
-    const utter = new SpeechSynthesisUtterance(item.chapterText);
+    // Get the text to speak (from startChar onwards if resuming)
+    let textToSpeak = item.chapterText;
+    if (startChar > 0 && startChar < item.chapterText.length) {
+        textToSpeak = item.chapterText.substring(startChar);
+        logActivity(`🔊 Speaking chapter ${idx + 1} with browser TTS from character ${startChar}: "${item.title}"`);
+    } else {
+        startChar = 0; // Reset if invalid
+        logActivity(`🔊 Speaking chapter ${idx + 1} with browser TTS: "${item.title}"`);
+    }
+
+    // Save reading position at start
+    saveReadingPosition(idx, startChar);
+
+    const utter = new SpeechSynthesisUtterance(textToSpeak);
     const selectedVoiceValue = voiceSelect.value;
     const voices = synth.getVoices();
 
@@ -1157,6 +1323,22 @@ function speakChapterWithBrowser(idx) {
     // when speaking starts, update UI state
     utter.onstart = () => {
         updatePlayButtonState();
+    };
+
+    // Track position as we speak (boundary event fires at word boundaries)
+    // Throttle saves to avoid excessive localStorage writes
+    let lastSaveTime = 0;
+    utter.onboundary = (event) => {
+        if (event.charIndex !== undefined) {
+            const now = Date.now();
+            // Save position at most once per second
+            if (now - lastSaveTime > 1000) {
+                // charIndex is relative to textToSpeak, so add startChar to get absolute position
+                const absoluteCharIndex = startChar + event.charIndex;
+                saveReadingPosition(idx, absoluteCharIndex);
+                lastSaveTime = now;
+            }
+        }
     };
 
     utter.onend = () => {
@@ -1206,7 +1388,7 @@ function speakChapterWithBrowser(idx) {
     synth.speak(utter);
 }
 
-async function speakChapterWithOpenAI(idx) {
+async function speakChapterWithOpenAI(idx, startChar = 0) {
     const item = outline[idx];
     if (!item || !item.chapterText) return;
 
@@ -1215,7 +1397,16 @@ async function speakChapterWithOpenAI(idx) {
 
     // highlight the chapter being spoken
     selectOutlineIndex(idx);
-    logActivity(`🔊 Speaking chapter ${idx + 1} with OpenAI TTS: "${item.title}"`);
+
+    if (startChar > 0 && startChar < item.chapterText.length) {
+        logActivity(`🔊 Speaking chapter ${idx + 1} with OpenAI TTS from character ${startChar}: "${item.title}"`);
+    } else {
+        startChar = 0; // Reset if invalid
+        logActivity(`🔊 Speaking chapter ${idx + 1} with OpenAI TTS: "${item.title}"`);
+    }
+
+    // Save reading position at start
+    saveReadingPosition(idx, startChar);
 
     const apiKey = getApiKey();
     if (!apiKey) {
@@ -1233,20 +1424,48 @@ async function speakChapterWithOpenAI(idx) {
     const instructions = (openaiInstructionsSelect && openaiInstructionsSelect.value) || '';
 
     try {
-        // Truncate text to 4096 characters at last sentence boundary
-        const text = truncateToSentence(item.chapterText, 4096);
-        if (text.length < item.chapterText.length) {
-            console.warn(`Chapter text truncated from ${item.chapterText.length} to ${text.length} characters`);
-            logActivity(`⚠️ Chapter ${idx + 1} text truncated from ${item.chapterText.length} to ${text.length} characters`);
+        // Get the text from startChar onwards
+        const textToSpeak = startChar > 0 ? item.chapterText.substring(startChar) : item.chapterText;
+
+        // Split text into chunks at sentence boundaries (max 4096 chars each)
+        const chunks = splitTextIntoChunks(textToSpeak, 4096);
+
+        if (chunks.length > 1) {
+            logActivity(`📄 Chapter ${idx + 1} split into ${chunks.length} chunks for OpenAI TTS`);
         }
 
-        showMessageInChapterContainer(`<h4>${escapeHtml(item.title)}</h4><div class="placeholder">Fetching audio from OpenAI…</div>`);
-        const buffer = await fetchOpenAITTS(text, voice, instructions, key);
+        // Play chunks sequentially
+        await playOpenAIChunks(idx, chunks, startChar, voice, instructions, key);
+
+    } catch (err) {
+        console.error('OpenAI TTS error', err);
+        logError('OpenAI TTS failed', err);
+        showError('Failed to fetch/play OpenAI audio: ' + (err && err.message ? err.message : String(err)));
+        updatePlayButtonState();
+    }
+}
+
+// Play OpenAI TTS chunks sequentially
+async function playOpenAIChunks(chapterIdx, chunks, baseCharOffset, voice, instructions, key) {
+    let currentCharOffset = baseCharOffset;
+
+    for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        const isLastChunk = (i === chunks.length - 1);
+
+        if (chunks.length > 1) {
+            showMessageInChapterContainer(`<h4>${escapeHtml(outline[chapterIdx].title)}</h4><div class="placeholder">Fetching audio chunk ${i + 1}/${chunks.length} from OpenAI…</div>`);
+            logActivity(`🔊 Playing chunk ${i + 1}/${chunks.length} of chapter ${chapterIdx + 1}`);
+        } else {
+            showMessageInChapterContainer(`<h4>${escapeHtml(outline[chapterIdx].title)}</h4><div class="placeholder">Fetching audio from OpenAI…</div>`);
+        }
+
+        const buffer = await fetchOpenAITTS(chunk, voice, instructions, key);
         if (!buffer) {
             throw new Error('No audio returned from OpenAI');
         }
 
-        // create blob and object URL
+        // Create blob and object URL
         const blob = new Blob([buffer], {type: 'audio/mpeg'});
         if (openaiAudioUrl) {
             try { URL.revokeObjectURL(openaiAudioUrl); } catch (e) {}
@@ -1260,46 +1479,84 @@ async function speakChapterWithOpenAI(idx) {
         openaiAudio = new Audio(openaiAudioUrl);
         openaiAudio.crossOrigin = 'anonymous';
 
-        openaiAudio.onplay = () => updatePlayButtonState();
-        openaiAudio.onpause = () => updatePlayButtonState();
-        openaiAudio.onerror = (e) => {
-            logError(`OpenAI audio playback error on chapter ${idx + 1}`, e);
-            console.error('OpenAI audio playback error', e);
-        };
-        openaiAudio.onended = () => {
-            logActivity(`✅ Finished speaking chapter ${idx + 1}: "${item.title}"`);
-            playingIndex = idx + 1;
-            updatePlayButtonState();
-            if (playingIndex < outline.length) {
-                if (autoplayCheckbox && !autoplayCheckbox.checked) {
-                    logActivity(`⏸️ Autoplay disabled, stopping at chapter ${playingIndex}`);
-                    return;
+        // Save position at start of this chunk
+        saveReadingPosition(chapterIdx, currentCharOffset);
+
+        // Track position during playback using timeupdate
+        // Throttle saves to avoid excessive localStorage writes
+        let lastSaveTime = 0;
+        openaiAudio.ontimeupdate = () => {
+            if (openaiAudio && openaiAudio.duration > 0) {
+                const now = Date.now();
+                // Save position at most once per 10 seconds
+                if (now - lastSaveTime > 10000) {
+                    const progress = openaiAudio.currentTime / openaiAudio.duration;
+                    const charsIntoChunk = Math.floor(chunk.length * progress);
+                    saveReadingPosition(chapterIdx, currentCharOffset + charsIntoChunk);
+                    lastSaveTime = now;
                 }
-                if (outline[playingIndex].chapterText) {
-                    setTimeout(() => speakChapter(playingIndex), 200);
-                } else {
-                    logActivity(`⏳ Waiting for chapter ${playingIndex + 1} to be generated...`);
-                    generateChapter(playingIndex, true).then(() => {
-                        logActivity(`▶️ Continuing autoplay with chapter ${playingIndex + 1}`);
-                        speakChapter(playingIndex);
-                    }).catch(err => {
-                        logError(`Failed to generate chapter ${playingIndex + 1} for autoplay`, err);
-                    });
-                }
-            } else {
-                logActivity(`🎉 All chapters completed!`);
-                try { releaseWakeLock(); } catch (e) {}
-                playingIndex = null;
             }
         };
 
-        // start playback
-        updatePlayButtonState();
-        await openaiAudio.play();
-    } catch (err) {
-        console.error('OpenAI TTS error', err);
-        logError('OpenAI TTS failed', err);
-        showError('OpenAI TTS failed: ' + (err && err.message ? err.message : String(err)));
+        openaiAudio.onplay = () => updatePlayButtonState();
+        openaiAudio.onpause = () => updatePlayButtonState();
+        openaiAudio.onerror = (e) => {
+            logError(`OpenAI audio playback error on chapter ${chapterIdx + 1}, chunk ${i + 1}`, e);
+            console.error('OpenAI audio playback error', e);
+        };
+
+        // Wait for this chunk to finish
+        await new Promise((resolve, reject) => {
+            openaiAudio.onended = () => {
+                if (isLastChunk) {
+                    // This was the last chunk of the chapter
+                    logActivity(`✅ Finished speaking chapter ${chapterIdx + 1}: "${outline[chapterIdx].title}"`);
+                    playingIndex = chapterIdx + 1;
+                    updatePlayButtonState();
+
+                    if (playingIndex < outline.length) {
+                        if (autoplayCheckbox && !autoplayCheckbox.checked) {
+                            logActivity(`⏸️ Autoplay disabled, stopping at chapter ${playingIndex}`);
+                            resolve();
+                            return;
+                        }
+                        if (outline[playingIndex].chapterText) {
+                            setTimeout(() => {
+                                speakChapter(playingIndex).then(resolve).catch(reject);
+                            }, 200);
+                        } else {
+                            logActivity(`⏳ Waiting for chapter ${playingIndex + 1} to be generated...`);
+                            generateChapter(playingIndex, true).then(() => {
+                                logActivity(`▶️ Continuing autoplay with chapter ${playingIndex + 1}`);
+                                speakChapter(playingIndex).then(resolve).catch(reject);
+                            }).catch(err => {
+                                logError(`Failed to generate chapter ${playingIndex + 1} for autoplay`, err);
+                                reject(err);
+                            });
+                        }
+                    } else {
+                        logActivity(`🎉 All chapters completed!`);
+                        try { releaseWakeLock(); } catch (e) {}
+                        playingIndex = null;
+                        resolve();
+                    }
+                } else {
+                    // Move to next chunk
+                    resolve();
+                }
+            };
+
+            openaiAudio.onerror = (e) => {
+                reject(e);
+            };
+
+            // Start playback
+            updatePlayButtonState();
+            openaiAudio.play().catch(reject);
+        });
+
+        // Move to next chunk position
+        currentCharOffset += chunk.length;
     }
 }
 
