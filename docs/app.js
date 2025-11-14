@@ -1445,24 +1445,43 @@ async function speakChapterWithOpenAI(idx, startChar = 0) {
     }
 }
 
-// Play OpenAI TTS chunks sequentially
+// Play OpenAI TTS chunks sequentially with background pre-fetching
 async function playOpenAIChunks(chapterIdx, chunks, baseCharOffset, voice, instructions, key) {
     let currentCharOffset = baseCharOffset;
+
+    // Pre-fetch the first chunk
+    let nextChunkPromise = null;
+    if (chunks.length > 0) {
+        if (chunks.length > 1) {
+            showMessageInChapterContainer(`<h4>${escapeHtml(outline[chapterIdx].title)}</h4><div class="placeholder">Fetching audio chunk 1/${chunks.length} from OpenAI…</div>`);
+            logActivity(`🔊 Fetching chunk 1/${chunks.length} of chapter ${chapterIdx + 1}`);
+        } else {
+            showMessageInChapterContainer(`<h4>${escapeHtml(outline[chapterIdx].title)}</h4><div class="placeholder">Fetching audio from OpenAI…</div>`);
+        }
+        nextChunkPromise = fetchOpenAITTS(chunks[0], voice, instructions, key);
+    }
 
     for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i];
         const isLastChunk = (i === chunks.length - 1);
 
-        if (chunks.length > 1) {
-            showMessageInChapterContainer(`<h4>${escapeHtml(outline[chapterIdx].title)}</h4><div class="placeholder">Fetching audio chunk ${i + 1}/${chunks.length} from OpenAI…</div>`);
-            logActivity(`🔊 Playing chunk ${i + 1}/${chunks.length} of chapter ${chapterIdx + 1}`);
-        } else {
-            showMessageInChapterContainer(`<h4>${escapeHtml(outline[chapterIdx].title)}</h4><div class="placeholder">Fetching audio from OpenAI…</div>`);
-        }
-
-        const buffer = await fetchOpenAITTS(chunk, voice, instructions, key);
+        // Wait for the current chunk to be ready (it was pre-fetched in the previous iteration)
+        const buffer = await nextChunkPromise;
         if (!buffer) {
             throw new Error('No audio returned from OpenAI');
+        }
+
+        // Start pre-fetching the next chunk in the background (if not the last chunk)
+        if (!isLastChunk) {
+            const nextChunkIdx = i + 1;
+            if (chunks.length > 1) {
+                logActivity(`🔄 Pre-fetching chunk ${nextChunkIdx + 1}/${chunks.length} in background`);
+            }
+            nextChunkPromise = fetchOpenAITTS(chunks[nextChunkIdx], voice, instructions, key);
+        }
+
+        if (chunks.length > 1) {
+            logActivity(`🔊 Playing chunk ${i + 1}/${chunks.length} of chapter ${chapterIdx + 1}`);
         }
 
         // Create blob and object URL
