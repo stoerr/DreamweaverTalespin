@@ -613,8 +613,14 @@ function getLanguageCode() {
 // Show/hide OpenAI voice container based on TTS provider selection
 function toggleOpenAIVoiceContainer(show) {
     if (!openaiVoiceContainer) return;
-    if (show) openaiVoiceContainer.classList.remove('d-none');
-    else openaiVoiceContainer.classList.add('d-none');
+    const browserVoiceContainer = document.getElementById('browser-voice-container');
+    if (show) {
+        openaiVoiceContainer.classList.remove('d-none');
+        if (browserVoiceContainer) browserVoiceContainer.classList.add('d-none');
+    } else {
+        openaiVoiceContainer.classList.add('d-none');
+        if (browserVoiceContainer) browserVoiceContainer.classList.remove('d-none');
+    }
 }
 
 // Truncate text to max 4096 characters, ending at the last complete sentence
