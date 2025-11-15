@@ -1484,6 +1484,14 @@ async function playOpenAIChunks(chapterIdx, chunks, baseCharOffset, voice, instr
             logActivity(`🔊 Playing chunk ${i + 1}/${chunks.length} of chapter ${chapterIdx + 1}`);
         }
 
+        // Display the chapter text (only on first chunk)
+        if (i === 0) {
+            const item = outline[chapterIdx];
+            if (item && item.chapterText) {
+                showMessageInChapterContainer(`<h4>${escapeHtml(item.title)}</h4><div>${escapeHtml(item.chapterText).replace(/\n/g, '<br/>')}</div>`);
+            }
+        }
+
         // Create blob and object URL
         const blob = new Blob([buffer], {type: 'audio/mpeg'});
         if (openaiAudioUrl) {
