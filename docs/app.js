@@ -611,6 +611,79 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// Wrap text in word spans for TTS highlighting
+// Each word gets a span with data-char-start and data-char-end attributes
+function wrapTextForHighlighting(text) {
+    const words = [];
+    let currentPos = 0;
+    
+    // Split text into words and whitespace, preserving both
+    const regex = /(\S+|\s+)/g;
+    let match;
+    
+    while ((match = regex.exec(text)) !== null) {
+        const token = match[1];
+        const startPos = match.index;
+        const endPos = startPos + token.length;
+        
+        if (token.trim()) {
+            // It's a word
+            words.push({
+                type: 'word',
+                text: token,
+                start: startPos,
+                end: endPos
+            });
+        } else {
+            // It's whitespace
+            words.push({
+                type: 'space',
+                text: token,
+                start: startPos,
+                end: endPos
+            });
+        }
+    }
+    
+    // Build HTML with spans
+    let html = '';
+    for (const item of words) {
+        if (item.type === 'word') {
+            const escapedText = escapeHtml(item.text);
+            html += `<span class="tts-word" data-char-start="${item.start}" data-char-end="${item.end}">${escapedText}</span>`;
+        } else {
+            html += escapeHtml(item.text).replace(/\n/g, '<br/>');
+        }
+    }
+    
+    return html;
+}
+
+// Clear all TTS highlights in the chapter container
+function clearTTSHighlights() {
+    const words = chapterContainer.querySelectorAll('.tts-word');
+    words.forEach(word => word.classList.remove('tts-highlight'));
+}
+
+// Highlight the word at the given character index
+function highlightWordAtCharIndex(charIndex) {
+    clearTTSHighlights();
+    
+    // Find the word span that contains this character index
+    const words = chapterContainer.querySelectorAll('.tts-word');
+    for (const word of words) {
+        const start = parseInt(word.getAttribute('data-char-start'), 10);
+        const end = parseInt(word.getAttribute('data-char-end'), 10);
+        
+        if (charIndex >= start && charIndex < end) {
+            word.classList.add('tts-highlight');
+            // Scroll the highlighted word into view if needed
+            word.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+            break;
+        }
+    }
+}
+
 // Return the currently selected language code (e.g., 'en', 'de') or null
 function getLanguageCode() {
     try {
@@ -932,7 +1005,9 @@ function selectOutlineIndex(idx) {
 
     const item = outline[idx];
     if (item.chapterText) {
-        showMessageInChapterContainer(`<h4>${escapeHtml(item.title)}</h4><div>${escapeHtml(item.chapterText).replace(/\n/g, '<br/>')}</div>`);
+        // Use word wrapping for highlighting support
+        const wrappedText = wrapTextForHighlighting(item.chapterText);
+        showMessageInChapterContainer(`<h4>${escapeHtml(item.title)}</h4><div id="chapter-text">${wrappedText}</div>`);
     } else {
         showMessageInChapterContainer(`<h4>${escapeHtml(item.title)}</h4><div class="placeholder">No chapter generated yet. Click "Generate Selected Chapter".</div><p class="small text-muted">${escapeHtml(item.description)}</p>`);
     }
@@ -1215,6 +1290,9 @@ pauseBtn.addEventListener('click', () => {
 
 stopBtn.addEventListener('click', async () => {
     logActivity('⏹️ Stop button pressed');
+    // Clear any TTS highlights
+    clearTTSHighlights();
+    
     // Stop both possible playback mechanisms
     try {
         synth.cancel();
@@ -1405,11 +1483,13 @@ function speakChapterWithBrowser(idx, startChar = 0) {
     let lastSaveTime = 0;
     utter.onboundary = (event) => {
         if (event.charIndex !== undefined) {
+            // Highlight the word at this position (charIndex is relative to firstFragment)
+            const absoluteCharIndex = startChar + event.charIndex;
+            highlightWordAtCharIndex(absoluteCharIndex);
+            
             const now = Date.now();
             // Save position at most once per second
             if (now - lastSaveTime > 1000) {
-                // charIndex is relative to firstFragment, so add startChar to get absolute position
-                const absoluteCharIndex = startChar + event.charIndex;
                 saveReadingPosition(idx, absoluteCharIndex);
                 lastSaveTime = now;
             }
@@ -1432,10 +1512,12 @@ function speakChapterWithBrowser(idx, startChar = 0) {
             let lastSaveTime2 = 0;
             remainingUtter.onboundary = (event) => {
                 if (event.charIndex !== undefined) {
+                    // Highlight the word at this position (charIndex is relative to remainingText)
+                    const absoluteCharIndex = startChar + firstFragment.length + event.charIndex;
+                    highlightWordAtCharIndex(absoluteCharIndex);
+                    
                     const now = Date.now();
                     if (now - lastSaveTime2 > 1000) {
-                        // charIndex is relative to remainingText, add startChar + firstFragment length
-                        const absoluteCharIndex = startChar + firstFragment.length + event.charIndex;
                         saveReadingPosition(idx, absoluteCharIndex);
                         lastSaveTime2 = now;
                     }
@@ -1443,6 +1525,9 @@ function speakChapterWithBrowser(idx, startChar = 0) {
             };
             
             remainingUtter.onend = () => {
+                // Clear highlights when chapter finishes
+                clearTTSHighlights();
+                
                 // when a chapter finishes, automatically play next (if exists)
                 logActivity(`✅ Finished speaking chapter ${idx + 1}: "${item.title}"`);
                 playingIndex = idx + 1;
@@ -1487,6 +1572,8 @@ function speakChapterWithBrowser(idx, startChar = 0) {
             synth.speak(remainingUtter);
         } else {
             // No remaining text, this was the complete chapter
+            clearTTSHighlights();
+            
             logActivity(`✅ Finished speaking chapter ${idx + 1}: "${item.title}"`);
             playingIndex = idx + 1;
             updatePlayButtonState();
@@ -1612,10 +1699,11 @@ async function speakChapterWithOpenAI(idx, startChar = 0) {
 async function playOpenAIChunks(chapterIdx, chunks, baseCharOffset, voice, instructions, key) {
     let currentCharOffset = baseCharOffset;
 
-    // Display the chapter text immediately before any fetching
+    // Display the chapter text immediately before any fetching with word wrapping
     const item = outline[chapterIdx];
     if (item && item.chapterText) {
-        showMessageInChapterContainer(`<h4>${escapeHtml(item.title)}</h4><div>${escapeHtml(item.chapterText).replace(/\n/g, '<br/>')}</div>`);
+        const wrappedText = wrapTextForHighlighting(item.chapterText);
+        showMessageInChapterContainer(`<h4>${escapeHtml(item.title)}</h4><div id="chapter-text">${wrappedText}</div>`);
     }
 
     // Pre-fetch the first chunk
@@ -1670,16 +1758,26 @@ async function playOpenAIChunks(chapterIdx, chunks, baseCharOffset, voice, instr
         saveReadingPosition(chapterIdx, currentCharOffset);
 
         // Track position during playback using timeupdate
-        // Throttle saves to avoid excessive localStorage writes
+        // Throttle saves to avoid excessive localStorage writes, but highlight more frequently
         let lastSaveTime = 0;
+        let lastHighlightTime = 0;
         openaiAudio.ontimeupdate = () => {
             if (openaiAudio && openaiAudio.duration > 0) {
+                const progress = openaiAudio.currentTime / openaiAudio.duration;
+                const charsIntoChunk = Math.floor(chunk.length * progress);
+                const absoluteCharIndex = currentCharOffset + charsIntoChunk;
+                
                 const now = Date.now();
+                
+                // Update highlight more frequently (every 200ms) for smoother visual feedback
+                if (now - lastHighlightTime > 200) {
+                    highlightWordAtCharIndex(absoluteCharIndex);
+                    lastHighlightTime = now;
+                }
+                
                 // Save position at most once per 10 seconds
                 if (now - lastSaveTime > 10000) {
-                    const progress = openaiAudio.currentTime / openaiAudio.duration;
-                    const charsIntoChunk = Math.floor(chunk.length * progress);
-                    saveReadingPosition(chapterIdx, currentCharOffset + charsIntoChunk);
+                    saveReadingPosition(chapterIdx, absoluteCharIndex);
                     lastSaveTime = now;
                 }
             }
@@ -1696,6 +1794,9 @@ async function playOpenAIChunks(chapterIdx, chunks, baseCharOffset, voice, instr
         await new Promise((resolve, reject) => {
             openaiAudio.onended = () => {
                 if (isLastChunk) {
+                    // Clear highlights when chapter finishes
+                    clearTTSHighlights();
+                    
                     // This was the last chunk of the chapter
                     logActivity(`✅ Finished speaking chapter ${chapterIdx + 1}: "${outline[chapterIdx].title}"`);
                     playingIndex = chapterIdx + 1;
