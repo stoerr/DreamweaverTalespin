@@ -217,6 +217,19 @@ footer {
     background: #555;
 }
 
+/* Text highlighting during read-aloud */
+.tts-highlight {
+    background-color: #ffeb3b;
+    color: #000;
+    padding: 2px 0;
+    border-radius: 3px;
+    transition: background-color 0.2s ease-in-out;
+}
+
+.tts-word {
+    display: inline;
+}
+
 @media (max-width: 768px) {
     body {
         padding: 0;
