@@ -67,6 +67,10 @@ function logError(message, error) {
 // This array will be replaced with contents of ./prompts/storyprompt-examples.json if available
 let loadedExamples = [];
 
+// Store the default prompts loaded from files so we can reset them later
+let defaultOutlinePrompt = '';
+let defaultChapterPrompt = '';
+
 let outline = []; // {title, description, details, chapterText (optional)}
 let storyTitle = null; // Book title from outline generation
 let storySubtitle = null; // Book subtitle from outline generation
@@ -333,8 +337,14 @@ window.addEventListener('DOMContentLoaded', async () => {
             fetch('./prompts/chapter.md').then(r => r.ok ? r.text() : '').catch(() => ''),
             fetch('./prompts/storyprompt-examples.json').then(r => r.ok ? r.json() : []).catch(() => []),
         ]);
-        if (outlineTxt) outlineSystemPromptInput.value = outlineTxt.trim();
-        if (chapterTxt) chapterSystemPromptInput.value = chapterTxt.trim();
+        if (outlineTxt) {
+            defaultOutlinePrompt = outlineTxt.trim();
+            outlineSystemPromptInput.value = defaultOutlinePrompt;
+        }
+        if (chapterTxt) {
+            defaultChapterPrompt = chapterTxt.trim();
+            chapterSystemPromptInput.value = defaultChapterPrompt;
+        }
         if (examplesJson && Array.isArray(examplesJson)) loadedExamples = examplesJson;
     } catch (e) {
         console.warn('Could not load prompt files:', e);
@@ -647,6 +657,45 @@ function truncateToSentence(text, maxLength = 4096) {
     return text.substring(0, lastSentenceEnd + 1);
 }
 
+// Extract first fragment for quick TTS startup (first 4 sentences or up to 5 lines)
+function extractFirstFragment(text) {
+    const lines = text.split('\n');
+    
+    // Get up to 5 lines
+    const firstLines = lines.slice(0, 5).join('\n');
+    
+    // Find the first 4 sentences within those lines
+    const sentenceEnders = ['. ', '! ', '? ', '.\n', '!\n', '?\n'];
+    let sentenceCount = 0;
+    let pos = 0;
+    
+    while (pos < firstLines.length && sentenceCount < 4) {
+        let nearestEnder = -1;
+        let nearestEnderLen = 0;
+        
+        for (const ender of sentenceEnders) {
+            const foundPos = firstLines.indexOf(ender, pos);
+            if (foundPos !== -1 && (nearestEnder === -1 || foundPos < nearestEnder)) {
+                nearestEnder = foundPos;
+                nearestEnderLen = ender.length;
+            }
+        }
+        
+        if (nearestEnder === -1) break;
+        
+        pos = nearestEnder + nearestEnderLen;
+        sentenceCount++;
+    }
+    
+    if (sentenceCount >= 4 && pos > 0) {
+        // Found 4 sentences, return up to that point
+        return firstLines.substring(0, pos).trim();
+    }
+    
+    // If we didn't find 4 sentences, return all 5 lines
+    return firstLines.trim();
+}
+
 // Split text into chunks of approximately maxLength characters at sentence boundaries
 function splitTextIntoChunks(text, maxLength = 4096) {
     if (text.length <= maxLength) return [text];
@@ -803,6 +852,14 @@ newStoryBtn.addEventListener('click', () => {
             }
         }
         resetStory();
+        // Reset prompts to default values
+        if (defaultOutlinePrompt && outlineSystemPromptInput) {
+            outlineSystemPromptInput.value = defaultOutlinePrompt;
+        }
+        if (defaultChapterPrompt && chapterSystemPromptInput) {
+            chapterSystemPromptInput.value = defaultChapterPrompt;
+        }
+        logActivity('🔄 System prompts reset to defaults');
     }
 });
 
@@ -1271,13 +1328,13 @@ function speakChapterWithBrowser(idx, startChar = 0) {
     // stop current
     synth.cancel();
 
-    // highlight the chapter being spoken
+    // highlight the chapter being spoken and display chapter text immediately
     selectOutlineIndex(idx);
 
     // Get the text to speak (from startChar onwards if resuming)
-    let textToSpeak = item.chapterText;
+    let fullTextToSpeak = item.chapterText;
     if (startChar > 0 && startChar < item.chapterText.length) {
-        textToSpeak = item.chapterText.substring(startChar);
+        fullTextToSpeak = item.chapterText.substring(startChar);
         logActivity(`🔊 Speaking chapter ${idx + 1} with browser TTS from character ${startChar}: "${item.title}"`);
     } else {
         startChar = 0; // Reset if invalid
@@ -1287,7 +1344,13 @@ function speakChapterWithBrowser(idx, startChar = 0) {
     // Save reading position at start
     saveReadingPosition(idx, startChar);
 
-    const utter = new SpeechSynthesisUtterance(textToSpeak);
+    // For quick startup, extract first fragment (first 4 sentences up to 5 lines)
+    const firstFragment = startChar === 0 ? extractFirstFragment(fullTextToSpeak) : fullTextToSpeak;
+    const remainingText = startChar === 0 && firstFragment.length < fullTextToSpeak.length 
+        ? fullTextToSpeak.substring(firstFragment.length).trim() 
+        : '';
+
+    const utter = new SpeechSynthesisUtterance(firstFragment);
     const selectedVoiceValue = voiceSelect.value;
     const voices = synth.getVoices();
 
@@ -1339,7 +1402,7 @@ function speakChapterWithBrowser(idx, startChar = 0) {
             const now = Date.now();
             // Save position at most once per second
             if (now - lastSaveTime > 1000) {
-                // charIndex is relative to textToSpeak, so add startChar to get absolute position
+                // charIndex is relative to firstFragment, so add startChar to get absolute position
                 const absoluteCharIndex = startChar + event.charIndex;
                 saveReadingPosition(idx, absoluteCharIndex);
                 lastSaveTime = now;
@@ -1348,39 +1411,109 @@ function speakChapterWithBrowser(idx, startChar = 0) {
     };
 
     utter.onend = () => {
-        // when a chapter finishes, automatically play next (if exists)
-        logActivity(`✅ Finished speaking chapter ${idx + 1}: "${item.title}"`);
-        playingIndex = idx + 1;
-        updatePlayButtonState();
-        if (playingIndex < outline.length) {
-            // only autoplay if enabled
-            if (autoplayCheckbox && !autoplayCheckbox.checked) {
-                logActivity(`⏸️ Autoplay disabled, stopping at chapter ${playingIndex}`);
-                return;
+        // If there's remaining text to speak, speak it now
+        if (remainingText) {
+            logActivity(`🔊 Continuing chapter ${idx + 1} with remaining text`);
+            const remainingUtter = new SpeechSynthesisUtterance(remainingText);
+            if (v) {
+                remainingUtter.voice = v;
+                try {
+                    if (v.lang) remainingUtter.lang = v.lang;
+                } catch (e) {}
             }
-            // ensure next is generated (generate in background if needed) and then speak it
-            if (outline[playingIndex].chapterText) {
-                // small timeout to allow background tasks to settle
-                setTimeout(() => speakChapter(playingIndex), 200);
-            } else {
-                // Chapter not ready - wait for it to be generated
-                logActivity(`⏳ Waiting for chapter ${playingIndex + 1} to be generated...`);
-                generateChapter(playingIndex, true).then(() => {
-                    logActivity(`▶️ Continuing autoplay with chapter ${playingIndex + 1}`);
-                    speakChapter(playingIndex);
-                }).catch(err => {
-                    logError(`Failed to generate chapter ${playingIndex + 1} for autoplay`, err);
-                });
-            }
+            
+            // Track position for remaining text
+            let lastSaveTime2 = 0;
+            remainingUtter.onboundary = (event) => {
+                if (event.charIndex !== undefined) {
+                    const now = Date.now();
+                    if (now - lastSaveTime2 > 1000) {
+                        // charIndex is relative to remainingText, add startChar + firstFragment length
+                        const absoluteCharIndex = startChar + firstFragment.length + event.charIndex;
+                        saveReadingPosition(idx, absoluteCharIndex);
+                        lastSaveTime2 = now;
+                    }
+                }
+            };
+            
+            remainingUtter.onend = () => {
+                // when a chapter finishes, automatically play next (if exists)
+                logActivity(`✅ Finished speaking chapter ${idx + 1}: "${item.title}"`);
+                playingIndex = idx + 1;
+                updatePlayButtonState();
+                if (playingIndex < outline.length) {
+                    // only autoplay if enabled
+                    if (autoplayCheckbox && !autoplayCheckbox.checked) {
+                        logActivity(`⏸️ Autoplay disabled, stopping at chapter ${playingIndex}`);
+                        return;
+                    }
+                    // ensure next is generated (generate in background if needed) and then speak it
+                    if (outline[playingIndex].chapterText) {
+                        // small timeout to allow background tasks to settle
+                        setTimeout(() => speakChapter(playingIndex), 200);
+                    } else {
+                        // Chapter not ready - wait for it to be generated
+                        logActivity(`⏳ Waiting for chapter ${playingIndex + 1} to be generated...`);
+                        generateChapter(playingIndex, true).then(() => {
+                            logActivity(`▶️ Continuing autoplay with chapter ${playingIndex + 1}`);
+                            speakChapter(playingIndex);
+                        }).catch(err => {
+                            logError(`Failed to generate chapter ${playingIndex + 1} for autoplay`, err);
+                        });
+                    }
+                } else {
+                    // finished all - release wake lock
+                    logActivity(`🎉 All chapters completed!`);
+                    try {
+                        releaseWakeLock();
+                    } catch (e) {
+                        // ignore
+                    }
+                    playingIndex = null;
+                }
+            };
+            
+            remainingUtter.onerror = (e) => {
+                logError(`Speech error on chapter ${idx + 1} (remaining text)`, e);
+                console.error('Speech error', e);
+            };
+            
+            synth.speak(remainingUtter);
         } else {
-            // finished all - release wake lock
-            logActivity(`🎉 All chapters completed!`);
-            try {
-                releaseWakeLock();
-            } catch (e) {
-                // ignore
+            // No remaining text, this was the complete chapter
+            logActivity(`✅ Finished speaking chapter ${idx + 1}: "${item.title}"`);
+            playingIndex = idx + 1;
+            updatePlayButtonState();
+            if (playingIndex < outline.length) {
+                // only autoplay if enabled
+                if (autoplayCheckbox && !autoplayCheckbox.checked) {
+                    logActivity(`⏸️ Autoplay disabled, stopping at chapter ${playingIndex}`);
+                    return;
+                }
+                // ensure next is generated (generate in background if needed) and then speak it
+                if (outline[playingIndex].chapterText) {
+                    // small timeout to allow background tasks to settle
+                    setTimeout(() => speakChapter(playingIndex), 200);
+                } else {
+                    // Chapter not ready - wait for it to be generated
+                    logActivity(`⏳ Waiting for chapter ${playingIndex + 1} to be generated...`);
+                    generateChapter(playingIndex, true).then(() => {
+                        logActivity(`▶️ Continuing autoplay with chapter ${playingIndex + 1}`);
+                        speakChapter(playingIndex);
+                    }).catch(err => {
+                        logError(`Failed to generate chapter ${playingIndex + 1} for autoplay`, err);
+                    });
+                }
+            } else {
+                // finished all - release wake lock
+                logActivity(`🎉 All chapters completed!`);
+                try {
+                    releaseWakeLock();
+                } catch (e) {
+                    // ignore
+                }
+                playingIndex = null;
             }
-            playingIndex = null;
         }
     };
 
@@ -1401,7 +1534,7 @@ async function speakChapterWithOpenAI(idx, startChar = 0) {
     // stop browser synth if running
     try { synth.cancel(); } catch (e) {}
 
-    // highlight the chapter being spoken
+    // highlight the chapter being spoken and display chapter text immediately
     selectOutlineIndex(idx);
 
     if (startChar > 0 && startChar < item.chapterText.length) {
@@ -1433,8 +1566,26 @@ async function speakChapterWithOpenAI(idx, startChar = 0) {
         // Get the text from startChar onwards
         const textToSpeak = startChar > 0 ? item.chapterText.substring(startChar) : item.chapterText;
 
-        // Split text into chunks at sentence boundaries (max 4096 chars each)
-        const chunks = splitTextIntoChunks(textToSpeak, 4096);
+        // For quick startup, extract first fragment (first 4 sentences up to 5 lines)
+        let chunks;
+        if (startChar === 0) {
+            const firstFragment = extractFirstFragment(textToSpeak);
+            const remainingText = firstFragment.length < textToSpeak.length 
+                ? textToSpeak.substring(firstFragment.length).trim() 
+                : '';
+            
+            if (remainingText) {
+                // Split the remaining text into chunks
+                const remainingChunks = splitTextIntoChunks(remainingText, 4096);
+                chunks = [firstFragment, ...remainingChunks];
+                logActivity(`📄 Chapter ${idx + 1}: First fragment (${firstFragment.length} chars) + ${remainingChunks.length} additional chunks for OpenAI TTS`);
+            } else {
+                chunks = [firstFragment];
+            }
+        } else {
+            // When resuming from a specific position, split normally
+            chunks = splitTextIntoChunks(textToSpeak, 4096);
+        }
 
         if (chunks.length > 1) {
             logActivity(`📄 Chapter ${idx + 1} split into ${chunks.length} chunks for OpenAI TTS`);
@@ -1455,14 +1606,19 @@ async function speakChapterWithOpenAI(idx, startChar = 0) {
 async function playOpenAIChunks(chapterIdx, chunks, baseCharOffset, voice, instructions, key) {
     let currentCharOffset = baseCharOffset;
 
+    // Display the chapter text immediately before any fetching
+    const item = outline[chapterIdx];
+    if (item && item.chapterText) {
+        showMessageInChapterContainer(`<h4>${escapeHtml(item.title)}</h4><div>${escapeHtml(item.chapterText).replace(/\n/g, '<br/>')}</div>`);
+    }
+
     // Pre-fetch the first chunk
     let nextChunkPromise = null;
     if (chunks.length > 0) {
         if (chunks.length > 1) {
-            showMessageInChapterContainer(`<h4>${escapeHtml(outline[chapterIdx].title)}</h4><div class="placeholder">Fetching audio chunk 1/${chunks.length} from OpenAI…</div>`);
-            logActivity(`🔊 Fetching chunk 1/${chunks.length} of chapter ${chapterIdx + 1}`);
+            logActivity(`🔊 Fetching audio chunk 1/${chunks.length} of chapter ${chapterIdx + 1}`);
         } else {
-            showMessageInChapterContainer(`<h4>${escapeHtml(outline[chapterIdx].title)}</h4><div class="placeholder">Fetching audio from OpenAI…</div>`);
+            logActivity(`🔊 Fetching audio of chapter ${chapterIdx + 1}`);
         }
         nextChunkPromise = fetchOpenAITTS(chunks[0], voice, instructions, key);
     }
@@ -1488,14 +1644,6 @@ async function playOpenAIChunks(chapterIdx, chunks, baseCharOffset, voice, instr
 
         if (chunks.length > 1) {
             logActivity(`🔊 Playing chunk ${i + 1}/${chunks.length} of chapter ${chapterIdx + 1}`);
-        }
-
-        // Display the chapter text (only on first chunk)
-        if (i === 0) {
-            const item = outline[chapterIdx];
-            if (item && item.chapterText) {
-                showMessageInChapterContainer(`<h4>${escapeHtml(item.title)}</h4><div>${escapeHtml(item.chapterText).replace(/\n/g, '<br/>')}</div>`);
-            }
         }
 
         // Create blob and object URL
