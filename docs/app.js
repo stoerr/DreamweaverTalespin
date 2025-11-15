@@ -25,6 +25,7 @@ const outlineSystemPromptInput = document.getElementById('outline-system-prompt'
 const chapterSystemPromptInput = document.getElementById('chapter-system-prompt');
 const storyPromptInput = document.getElementById('story-prompt');
 const generateOutlineBtn = document.getElementById('generate-outline');
+const resetPromptsBtn = document.getElementById('reset-prompts');
 const newStoryBtn = document.getElementById('new-story');
 const outlineList = document.getElementById('outline-list');
 const generateChapterBtn = document.getElementById('generate-chapter');
@@ -852,15 +853,20 @@ newStoryBtn.addEventListener('click', () => {
             }
         }
         resetStory();
-        // Reset prompts to default values
-        if (defaultOutlinePrompt && outlineSystemPromptInput) {
-            outlineSystemPromptInput.value = defaultOutlinePrompt;
-        }
-        if (defaultChapterPrompt && chapterSystemPromptInput) {
-            chapterSystemPromptInput.value = defaultChapterPrompt;
-        }
-        logActivity('🔄 System prompts reset to defaults');
     }
+});
+
+// Reset Prompts button - reset system prompts to defaults
+resetPromptsBtn.addEventListener('click', () => {
+    logActivity('🔄 Reset Prompts button pressed');
+    // Reset prompts to default values
+    if (defaultOutlinePrompt && outlineSystemPromptInput) {
+        outlineSystemPromptInput.value = defaultOutlinePrompt;
+    }
+    if (defaultChapterPrompt && chapterSystemPromptInput) {
+        chapterSystemPromptInput.value = defaultChapterPrompt;
+    }
+    logActivity('✅ System prompts reset to defaults');
 });
 
 function renderOutline() {
