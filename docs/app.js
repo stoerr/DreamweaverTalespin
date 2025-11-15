@@ -746,7 +746,7 @@ async function generateOutline(foreground = true) {
     generateOutlineBtn.disabled = true;
     if (foreground) showMessageInChapterContainer('<div class="d-flex align-items-center"><strong>Generating outline…</strong><div class="spinner-border ms-3" role="status" aria-hidden="true"></div></div>');
 
-    const selectedModel = (modelSelect && modelSelect.value) || 'gpt-5';
+    const selectedModel = (modelSelect && modelSelect.value) || 'gpt-5.1';
     logActivity(`🎬 Starting outline generation with model: ${selectedModel}`);
 
     try {
@@ -950,7 +950,7 @@ async function generateChapter(idx, foreground = true) {
         let systemPrompt = (chapterSystemPromptInput.value || '').trim();
         if (!systemPrompt) systemPrompt = 'You are an assistant that expands a chapter description into a full chapter. Keep it vivid and engaging.';
 
-        const selectedModel = (modelSelect && modelSelect.value) || 'gpt-5';
+        const selectedModel = (modelSelect && modelSelect.value) || 'gpt-5.1';
         const mode = foreground ? 'foreground' : 'background';
         logActivity(`📝 Starting chapter generation (${mode}): ${idx + 1}. "${item.title}" with model: ${selectedModel}`);
 
