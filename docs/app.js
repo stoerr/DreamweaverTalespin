@@ -1116,7 +1116,8 @@ async function generateChapter(idx, foreground = true) {
                 storyPrompt,
                 languageCode,
                 bookMetadata,
-                selectedModel
+                selectedModel,
+                !foreground  // Use flex tier for background generation
             );
 
             item.chapterText = resp;

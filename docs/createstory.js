@@ -227,9 +227,10 @@ async function generateOutline(apiKey, storyPrompt, systemPrompt, languageCode =
  * @param {string|null} languageCode - Optional language code
  * @param {Object|null} bookMetadata - Book metadata {title: string, subtitle: string, description: string, characters: Array}
  * @param {string|null} model - Optional model name (defaults to defaultmodel)
+ * @param {boolean} useFlexTier - Whether to use flex tier for background generation (defaults to false)
  * @returns {Promise<string>} - Generated chapter text
  */
-async function generateChapter(apiKey, chapterInfo, systemPrompt, priorChapters = [], storyPrompt, languageCode = null, bookMetadata = null, model = null) {
+async function generateChapter(apiKey, chapterInfo, systemPrompt, priorChapters = [], storyPrompt, languageCode = null, bookMetadata = null, model = null, useFlexTier = false) {
     const messages = [];
     const langInstr = getLanguageInstruction(languageCode);
 
@@ -269,8 +270,18 @@ async function generateChapter(apiKey, chapterInfo, systemPrompt, priorChapters 
     }
     messages.push({role: 'user', content: userContent});
 
+    // Determine the model to use - append -flex for background/flex tier generation
+    let modelToUse = model || defaultmodel;
+    if (useFlexTier) {
+        // Check if the model already has -flex suffix to avoid duplication
+        if (!modelToUse.endsWith('-flex')) {
+            modelToUse = modelToUse + '-flex';
+        }
+        console.log(`Using flex tier model: ${modelToUse} for background generation`);
+    }
+
     const response = await callOpenAI(apiKey, messages, {
-        model: model || defaultmodel
+        model: modelToUse
     });
     return (response || '').trim();
 }
