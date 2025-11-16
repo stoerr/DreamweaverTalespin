@@ -60,7 +60,21 @@ function logActivity(message) {
 }
 
 function logError(message, error) {
-    const errorMsg = error ? `${message}: ${error.message || String(error)}` : message;
+    let errorMsg = message;
+    if (error) {
+        // Include detailed error information for debugging on mobile
+        errorMsg += `: ${error.message || String(error)}`;
+        if (error.stack) {
+            errorMsg += `\nStack: ${error.stack}`;
+        }
+        // Include any additional error properties
+        if (error.error) {
+            errorMsg += `\nDetails: ${JSON.stringify(error.error)}`;
+        }
+        if (error.type) {
+            errorMsg += `\nType: ${error.type}`;
+        }
+    }
     logActivity(`❌ ERROR: ${errorMsg}`);
     console.error(message, error);
 }
@@ -611,77 +625,32 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// Wrap text in word spans for TTS highlighting
-// Each word gets a span with data-char-start and data-char-end attributes
+// Wrap text in spans for TTS chunk highlighting
+// Text is divided into chunks at the character level for highlighting
 function wrapTextForHighlighting(text) {
-    const words = [];
-    let currentPos = 0;
-    
-    // Split text into words and whitespace, preserving both
-    const regex = /(\S+|\s+)/g;
-    let match;
-    
-    while ((match = regex.exec(text)) !== null) {
-        const token = match[1];
-        const startPos = match.index;
-        const endPos = startPos + token.length;
-        
-        if (token.trim()) {
-            // It's a word
-            words.push({
-                type: 'word',
-                text: token,
-                start: startPos,
-                end: endPos
-            });
-        } else {
-            // It's whitespace
-            words.push({
-                type: 'space',
-                text: token,
-                start: startPos,
-                end: endPos
-            });
-        }
-    }
-    
-    // Build HTML with spans
-    let html = '';
-    for (const item of words) {
-        if (item.type === 'word') {
-            const escapedText = escapeHtml(item.text);
-            html += `<span class="tts-word" data-char-start="${item.start}" data-char-end="${item.end}">${escapedText}</span>`;
-        } else {
-            html += escapeHtml(item.text).replace(/\n/g, '<br/>');
-        }
-    }
-    
-    return html;
+    // Escape and preserve newlines
+    const escapedText = escapeHtml(text).replace(/\n/g, '<br/>');
+    // Return the text wrapped in a container that we can later add chunk highlights to
+    return escapedText;
 }
 
 // Clear all TTS highlights in the chapter container
 function clearTTSHighlights() {
-    const words = chapterContainer.querySelectorAll('.tts-word');
-    words.forEach(word => word.classList.remove('tts-highlight'));
+    // Remove any existing highlight spans
+    const highlights = chapterContainer.querySelectorAll('.tts-highlight-overlay');
+    highlights.forEach(h => h.remove());
 }
 
-// Highlight the word at the given character index
-function highlightWordAtCharIndex(charIndex) {
+// Highlight a chunk of text from startChar to endChar
+function highlightChunk(startChar, endChar) {
     clearTTSHighlights();
     
-    // Find the word span that contains this character index
-    const words = chapterContainer.querySelectorAll('.tts-word');
-    for (const word of words) {
-        const start = parseInt(word.getAttribute('data-char-start'), 10);
-        const end = parseInt(word.getAttribute('data-char-end'), 10);
-        
-        if (charIndex >= start && charIndex < end) {
-            word.classList.add('tts-highlight');
-            // Scroll the highlighted word into view if needed
-            word.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
-            break;
-        }
-    }
+    // Get the chapter text element
+    const chapterTextEl = document.getElementById('chapter-text');
+    if (!chapterTextEl) return;
+    
+    // Add a highlight class to the entire chapter text element for the duration
+    chapterTextEl.classList.add('tts-highlight');
 }
 
 // Return the currently selected language code (e.g., 'en', 'de') or null
@@ -1473,19 +1442,19 @@ function speakChapterWithBrowser(idx, startChar = 0) {
         console.warn(`Could not find voice "${selectedVoiceValue}", using browser default`);
     }
 
-    // when speaking starts, update UI state
+    // when speaking starts, update UI state and highlight the chunk
     utter.onstart = () => {
         updatePlayButtonState();
+        // Highlight the chunk being spoken (from startChar to startChar + firstFragment.length)
+        highlightChunk(startChar, startChar + firstFragment.length);
     };
 
     // Track position as we speak (boundary event fires at word boundaries)
-    // Throttle saves to avoid excessive localStorage writes
+    // Save position periodically but don't update highlights
     let lastSaveTime = 0;
     utter.onboundary = (event) => {
         if (event.charIndex !== undefined) {
-            // Highlight the word at this position (charIndex is relative to firstFragment)
             const absoluteCharIndex = startChar + event.charIndex;
-            highlightWordAtCharIndex(absoluteCharIndex);
             
             const now = Date.now();
             // Save position at most once per second
@@ -1507,14 +1476,16 @@ function speakChapterWithBrowser(idx, startChar = 0) {
                     if (v.lang) remainingUtter.lang = v.lang;
                 } catch (e) {}
             }
+            // Highlight the chunk being spoken and track position for remaining text
+            remainingUtter.onstart = () => {
+                // Highlight the remaining chunk (from firstFragment end to end of text)
+                highlightChunk(startChar + firstFragment.length, startChar + fullTextToSpeak.length);
+            };
             
-            // Track position for remaining text
             let lastSaveTime2 = 0;
             remainingUtter.onboundary = (event) => {
                 if (event.charIndex !== undefined) {
-                    // Highlight the word at this position (charIndex is relative to remainingText)
                     const absoluteCharIndex = startChar + firstFragment.length + event.charIndex;
-                    highlightWordAtCharIndex(absoluteCharIndex);
                     
                     const now = Date.now();
                     if (now - lastSaveTime2 > 1000) {
@@ -1754,13 +1725,15 @@ async function playOpenAIChunks(chapterIdx, chunks, baseCharOffset, voice, instr
         openaiAudio = new Audio(openaiAudioUrl);
         openaiAudio.crossOrigin = 'anonymous';
 
-        // Save position at start of this chunk
+        // Save position at start of this chunk and highlight it
         saveReadingPosition(chapterIdx, currentCharOffset);
+        
+        // Highlight the entire chunk being played
+        highlightChunk(currentCharOffset, currentCharOffset + chunk.length);
 
         // Track position during playback using timeupdate
-        // Throttle saves to avoid excessive localStorage writes, but highlight more frequently
+        // Save position periodically but don't update highlights
         let lastSaveTime = 0;
-        let lastHighlightTime = 0;
         openaiAudio.ontimeupdate = () => {
             if (openaiAudio && openaiAudio.duration > 0) {
                 const progress = openaiAudio.currentTime / openaiAudio.duration;
@@ -1768,12 +1741,6 @@ async function playOpenAIChunks(chapterIdx, chunks, baseCharOffset, voice, instr
                 const absoluteCharIndex = currentCharOffset + charsIntoChunk;
                 
                 const now = Date.now();
-                
-                // Update highlight more frequently (every 200ms) for smoother visual feedback
-                if (now - lastHighlightTime > 200) {
-                    highlightWordAtCharIndex(absoluteCharIndex);
-                    lastHighlightTime = now;
-                }
                 
                 // Save position at most once per 10 seconds
                 if (now - lastSaveTime > 10000) {
