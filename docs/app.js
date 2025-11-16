@@ -636,9 +636,11 @@ function wrapTextForHighlighting(text) {
 
 // Clear all TTS highlights in the chapter container
 function clearTTSHighlights() {
-    // Remove any existing highlight spans
-    const highlights = chapterContainer.querySelectorAll('.tts-highlight-overlay');
-    highlights.forEach(h => h.remove());
+    // Remove highlight class from chapter text element
+    const chapterTextEl = document.getElementById('chapter-text');
+    if (chapterTextEl) {
+        chapterTextEl.classList.remove('tts-highlight');
+    }
 }
 
 // Highlight a chunk of text from startChar to endChar
