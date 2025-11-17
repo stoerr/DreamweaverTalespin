@@ -1079,6 +1079,8 @@ async function generateChapter(idx, foreground = true) {
                 characters: storyCharacters
             };
 
+            const serviceTier = foreground ? null : 'flex';
+
             const resp = await window.StoryGenerator.generateChapter(
                 apiKey,
                 item,
@@ -1087,7 +1089,8 @@ async function generateChapter(idx, foreground = true) {
                 storyPrompt,
                 languageCode,
                 bookMetadata,
-                selectedModel
+                selectedModel,
+                serviceTier
             );
 
             item.chapterText = resp;

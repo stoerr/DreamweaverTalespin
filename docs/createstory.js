@@ -18,6 +18,10 @@ async function callOpenAI(apiKey, messages, opts = {}) {
         max_completion_tokens: typeof opts.max_tokens === 'number' ? opts.max_tokens : 10240,
     };
 
+    if (opts.service_tier) {
+        body.service_tier = opts.service_tier;
+    }
+
     // Add response_format if specified (for JSON mode)
     if (opts.response_format) {
         body.response_format = opts.response_format;
@@ -229,7 +233,7 @@ async function generateOutline(apiKey, storyPrompt, systemPrompt, languageCode =
  * @param {string|null} model - Optional model name (defaults to defaultmodel)
  * @returns {Promise<string>} - Generated chapter text
  */
-async function generateChapter(apiKey, chapterInfo, systemPrompt, priorChapters = [], storyPrompt, languageCode = null, bookMetadata = null, model = null) {
+async function generateChapter(apiKey, chapterInfo, systemPrompt, priorChapters = [], storyPrompt, languageCode = null, bookMetadata = null, model = null, serviceTier = null) {
     const messages = [];
     const langInstr = getLanguageInstruction(languageCode);
 
@@ -270,7 +274,8 @@ async function generateChapter(apiKey, chapterInfo, systemPrompt, priorChapters 
     messages.push({role: 'user', content: userContent});
 
     const response = await callOpenAI(apiKey, messages, {
-        model: model || defaultmodel
+        model: model || defaultmodel,
+        service_tier: serviceTier || undefined
     });
     return (response || '').trim();
 }
