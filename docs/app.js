@@ -29,6 +29,7 @@ const newStoryBtn = document.getElementById('new-story');
 const outlineList = document.getElementById('outline-list');
 const generateChapterBtn = document.getElementById('generate-chapter');
 const generateNextBgBtn = document.getElementById('generate-next-bg');
+const generateWholeStoryBtn = document.getElementById('generate-whole-story');
 const chapterContainer = document.getElementById('chapter-container');
 const playBtn = document.getElementById('play-btn');
 const continueBtn = document.getElementById('continue-btn');
@@ -42,6 +43,8 @@ const autoplayCheckbox = document.getElementById('autoplay');
 const storyExamplesSelect = document.getElementById('story-examples');
 const openaiVoiceSelect = document.getElementById('openai-voice-select');
 const openaiInstructionsSelect = document.getElementById('openai-instructions-select');
+const openaiInstructionsTextarea = document.getElementById('openai-instructions-textarea');
+const openaiInstructionsGroup = document.getElementById('openai-instructions-group');
 const openaiTTSModelSelect = document.getElementById('openai-tts-model-select');
 const activityLog = document.getElementById('activity-log');
 
@@ -94,6 +97,10 @@ let isGenerating = false;
 let generatingChapterIndex = null; // Track which chapter is being generated
 let chapterGenerationPromise = null; // Promise for the current chapter generation
 let playingIndex = null;
+let currentParagraphs = [];
+let currentParagraphChapterIdx = null;
+let currentHighlightedParagraphIndex = null;
+let isGeneratingWholeStory = false;
 
 // OpenAI audio playback element (when using OpenAI TTS)
 let openaiAudio = null; // HTMLAudioElement
@@ -275,6 +282,45 @@ function clearReadingPosition() {
     }
 }
 
+function shouldUseCustomInstructionsTextarea() {
+    return !!(openaiTTSModelSelect && openaiTTSModelSelect.value === 'gpt-4o-mini-tts');
+}
+
+function getCurrentVoiceInstructions() {
+    if (shouldUseCustomInstructionsTextarea()) {
+        return (openaiInstructionsTextarea && openaiInstructionsTextarea.value) || '';
+    }
+    return (openaiInstructionsSelect && openaiInstructionsSelect.value) || '';
+}
+
+function persistVoiceInstructions() {
+    try {
+        localStorage.setItem(OPENAI_INSTRUCTIONS_STORAGE, getCurrentVoiceInstructions());
+    } catch (e) {
+    }
+}
+
+function updateVoiceInstructionsUI() {
+    if (!openaiInstructionsGroup) return;
+    const model = openaiTTSModelSelect ? openaiTTSModelSelect.value : 'tts-1-hd';
+    if (model === 'tts-1-hd') {
+        openaiInstructionsGroup.classList.add('d-none');
+    } else {
+        openaiInstructionsGroup.classList.remove('d-none');
+    }
+    if (openaiInstructionsTextarea) {
+        const showTextarea = model === 'gpt-4o-mini-tts';
+        openaiInstructionsTextarea.classList.toggle('d-none', !showTextarea);
+    }
+}
+
+function setWholeStoryGenerationState(running) {
+    isGeneratingWholeStory = running;
+    if (generateChapterBtn) generateChapterBtn.disabled = running;
+    if (generateNextBgBtn) generateNextBgBtn.disabled = running;
+    if (generateWholeStoryBtn) generateWholeStoryBtn.disabled = running;
+}
+
 // Reset story (clear outline, chapters, and metadata)
 function resetStory() {
     outline = [];
@@ -376,7 +422,11 @@ window.addEventListener('DOMContentLoaded', async () => {
         const oa = localStorage.getItem(OPENAI_VOICE_STORAGE) || '';
         if (openaiVoiceSelect && oa) openaiVoiceSelect.value = oa;
         const instr = localStorage.getItem(OPENAI_INSTRUCTIONS_STORAGE) || '';
-        if (openaiInstructionsSelect && instr) openaiInstructionsSelect.value = instr;
+        if (openaiInstructionsTextarea) openaiInstructionsTextarea.value = instr;
+        if (openaiInstructionsSelect) {
+            const optionExists = Array.from(openaiInstructionsSelect.options).some(opt => opt.value === instr);
+            openaiInstructionsSelect.value = optionExists ? instr : '';
+        }
         const storedTTSModel = localStorage.getItem(OPENAI_TTS_MODEL_STORAGE) || '';
         if (openaiTTSModelSelect && storedTTSModel) openaiTTSModelSelect.value = storedTTSModel;
     } catch (e) {
@@ -434,10 +484,18 @@ window.addEventListener('DOMContentLoaded', async () => {
 
     if (openaiInstructionsSelect) {
         openaiInstructionsSelect.addEventListener('change', () => {
-            try {
-                localStorage.setItem(OPENAI_INSTRUCTIONS_STORAGE, openaiInstructionsSelect.value || '');
-            } catch (e) {
+            if (shouldUseCustomInstructionsTextarea()) {
+                if (openaiInstructionsTextarea) {
+                    openaiInstructionsTextarea.value = openaiInstructionsSelect.value || '';
+                }
             }
+            persistVoiceInstructions();
+        });
+    }
+
+    if (openaiInstructionsTextarea) {
+        openaiInstructionsTextarea.addEventListener('input', () => {
+            persistVoiceInstructions();
         });
     }
 
@@ -447,8 +505,15 @@ window.addEventListener('DOMContentLoaded', async () => {
                 localStorage.setItem(OPENAI_TTS_MODEL_STORAGE, openaiTTSModelSelect.value || '');
             } catch (e) {
             }
+            updateVoiceInstructionsUI();
+            if (shouldUseCustomInstructionsTextarea() && openaiInstructionsTextarea && !openaiInstructionsTextarea.value && openaiInstructionsSelect) {
+                openaiInstructionsTextarea.value = openaiInstructionsSelect.value || '';
+                persistVoiceInstructions();
+            }
         });
     }
+
+    updateVoiceInstructionsUI();
 
     // Populate language selector
     populateLanguageOptions();
@@ -536,34 +601,132 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// Wrap text in spans for TTS chunk highlighting
-// Text is divided into chunks at the character level for highlighting
-function wrapTextForHighlighting(text) {
-    // Escape and preserve newlines
-    const escapedText = escapeHtml(text).replace(/\n/g, '<br/>');
-    // Return the text wrapped in a container that we can later add chunk highlights to
-    return escapedText;
+function splitTextIntoParagraphs(text) {
+    const paragraphs = [];
+    if (!text) return paragraphs;
+
+    const separatorRegex = /\r?\n(?:\s*\r?\n)+/g;
+    let lastIndex = 0;
+    let match;
+
+    while ((match = separatorRegex.exec(text)) !== null) {
+        const endIndex = match.index;
+        if (endIndex > lastIndex) {
+            paragraphs.push({
+                start: lastIndex,
+                end: endIndex,
+                text: text.slice(lastIndex, endIndex)
+            });
+        }
+        lastIndex = match.index + match[0].length;
+    }
+
+    if (lastIndex < text.length) {
+        paragraphs.push({
+            start: lastIndex,
+            end: text.length,
+            text: text.slice(lastIndex)
+        });
+    }
+
+    if (!paragraphs.length && text.length) {
+        paragraphs.push({start: 0, end: text.length, text});
+    }
+
+    return paragraphs;
 }
 
-// Clear all TTS highlights in the chapter container
+function findParagraphIndexByChar(paragraphs, charIndex) {
+    if (!paragraphs || !paragraphs.length) return -1;
+    for (let i = 0; i < paragraphs.length; i++) {
+        const para = paragraphs[i];
+        if (charIndex >= para.start && charIndex < para.end) {
+            return i;
+        }
+    }
+    return paragraphs.length - 1;
+}
+
+function wrapTextForHighlighting(text, chapterIdx = null) {
+    currentParagraphChapterIdx = typeof chapterIdx === 'number' ? chapterIdx : null;
+    currentParagraphs = splitTextIntoParagraphs(text);
+    currentHighlightedParagraphIndex = null;
+
+    if (!currentParagraphs.length) {
+        return escapeHtml(text || '').replace(/\n/g, '<br/>');
+    }
+
+    return currentParagraphs.map((para, index) => {
+        const displayText = escapeHtml(para.text.trim()).replace(/\n/g, '<br/>') || '&nbsp;';
+        return `<div class="chapter-paragraph" data-paragraph-index="${index}" data-start="${para.start}" data-end="${para.end}">${displayText}</div>`;
+    }).join('');
+}
+
 function clearTTSHighlights() {
-    // Remove highlight class from chapter text element
-    const chapterTextEl = document.getElementById('chapter-text');
-    if (chapterTextEl) {
-        chapterTextEl.classList.remove('tts-highlight');
+    document.querySelectorAll('#chapter-text .chapter-paragraph.tts-highlight')
+        .forEach(el => el.classList.remove('tts-highlight'));
+    currentHighlightedParagraphIndex = null;
+}
+
+function highlightParagraphForCharIndex(charIndex) {
+    if (!currentParagraphs.length || currentParagraphChapterIdx === null) return;
+    const paragraphIdx = findParagraphIndexByChar(currentParagraphs, charIndex);
+    if (paragraphIdx === -1 || paragraphIdx === currentHighlightedParagraphIndex) return;
+
+    clearTTSHighlights();
+
+    const paragraphEl = document.querySelector(`#chapter-text .chapter-paragraph[data-paragraph-index="${paragraphIdx}"]`);
+    if (paragraphEl) {
+        paragraphEl.classList.add('tts-highlight');
+        currentHighlightedParagraphIndex = paragraphIdx;
     }
 }
 
-// Highlight a chunk of text from startChar to endChar
-function highlightChunk(startChar, endChar) {
-    clearTTSHighlights();
-    
-    // Get the chapter text element
-    const chapterTextEl = document.getElementById('chapter-text');
-    if (!chapterTextEl) return;
-    
-    // Add a highlight class to the entire chapter text element for the duration
-    chapterTextEl.classList.add('tts-highlight');
+function normalizeStartCharToParagraph(paragraphs, startChar) {
+    if (!paragraphs.length) return 0;
+    if (startChar <= paragraphs[0].start) return paragraphs[0].start;
+    const idx = findParagraphIndexByChar(paragraphs, startChar);
+    if (idx === -1) return paragraphs[paragraphs.length - 1].start;
+    return paragraphs[idx].start;
+}
+
+function buildParagraphChunksFromParagraphs(paragraphs, startIndex, fullText, minChars = 400) {
+    if (!paragraphs.length) {
+        const trimmed = (fullText || '').trim();
+        if (!trimmed) return [];
+        return [{
+            text: trimmed,
+            start: 0,
+            end: fullText.length
+        }];
+    }
+
+    const chunks = [];
+    let index = startIndex < 0 ? 0 : Math.min(startIndex, paragraphs.length - 1);
+
+    while (index < paragraphs.length) {
+        let chunkStart = paragraphs[index].start;
+        let chunkEnd = paragraphs[index].end;
+        let lastParagraphIdx = index;
+
+        while ((chunkEnd - chunkStart) < minChars && lastParagraphIdx + 1 < paragraphs.length) {
+            lastParagraphIdx++;
+            chunkEnd = paragraphs[lastParagraphIdx].end;
+        }
+
+        const slice = fullText.slice(chunkStart, chunkEnd).trim();
+        if (slice) {
+            chunks.push({
+                text: slice,
+                start: chunkStart,
+                end: chunkEnd
+            });
+        }
+
+        index = lastParagraphIdx + 1;
+    }
+
+    return chunks;
 }
 
 // Return the currently selected language code (e.g., 'en', 'de') or null
@@ -574,90 +737,6 @@ function getLanguageCode() {
     } catch (e) {
         return null;
     }
-}
-
-// Truncate text to max 4096 characters, ending at the last complete sentence
-function truncateToSentence(text, maxLength = 4096) {
-    if (text.length <= maxLength) return text;
-
-    // Find the last sentence-ending punctuation before the limit
-    const truncated = text.substring(0, maxLength);
-    const sentenceEnders = ['. ', '! ', '? ', '.\n', '!\n', '?\n'];
-
-    let lastSentenceEnd = -1;
-    for (const ender of sentenceEnders) {
-        const pos = truncated.lastIndexOf(ender);
-        if (pos > lastSentenceEnd) {
-            lastSentenceEnd = pos + ender.length - 1; // Include the punctuation but not the space/newline
-        }
-    }
-
-    // If no sentence ending found, just cut at maxLength
-    if (lastSentenceEnd === -1) {
-        return truncated;
-    }
-
-    return text.substring(0, lastSentenceEnd + 1);
-}
-
-// Extract first fragment for quick TTS startup (first 4 sentences or up to 5 lines)
-function extractFirstFragment(text) {
-    const lines = text.split('\n');
-    
-    // Get up to 5 lines
-    const firstLines = lines.slice(0, 5).join('\n');
-    
-    // Find the first 4 sentences within those lines
-    const sentenceEnders = ['. ', '! ', '? ', '.\n', '!\n', '?\n'];
-    let sentenceCount = 0;
-    let pos = 0;
-    
-    while (pos < firstLines.length && sentenceCount < 4) {
-        let nearestEnder = -1;
-        let nearestEnderLen = 0;
-        
-        for (const ender of sentenceEnders) {
-            const foundPos = firstLines.indexOf(ender, pos);
-            if (foundPos !== -1 && (nearestEnder === -1 || foundPos < nearestEnder)) {
-                nearestEnder = foundPos;
-                nearestEnderLen = ender.length;
-            }
-        }
-        
-        if (nearestEnder === -1) break;
-        
-        pos = nearestEnder + nearestEnderLen;
-        sentenceCount++;
-    }
-    
-    if (sentenceCount >= 4 && pos > 0) {
-        // Found 4 sentences, return up to that point
-        return firstLines.substring(0, pos).trim();
-    }
-    
-    // If we didn't find 4 sentences, return all 5 lines
-    return firstLines.trim();
-}
-
-// Split text into chunks of approximately maxLength characters at sentence boundaries
-function splitTextIntoChunks(text, maxLength = 4096) {
-    if (text.length <= maxLength) return [text];
-
-    const chunks = [];
-    let remaining = text;
-
-    while (remaining.length > 0) {
-        if (remaining.length <= maxLength) {
-            chunks.push(remaining);
-            break;
-        }
-
-        const chunk = truncateToSentence(remaining, maxLength);
-        chunks.push(chunk);
-        remaining = remaining.substring(chunk.length).trimStart();
-    }
-
-    return chunks;
 }
 
 // Request a screen wake lock to keep the display on (works on supported Android browsers)
@@ -864,11 +943,32 @@ function selectOutlineIndex(idx) {
     const item = outline[idx];
     if (item.chapterText) {
         // Use word wrapping for highlighting support
-        const wrappedText = wrapTextForHighlighting(item.chapterText);
+        const wrappedText = wrapTextForHighlighting(item.chapterText, idx);
         showMessageInChapterContainer(`<h4>${escapeHtml(item.title)}</h4><div id="chapter-text">${wrappedText}</div>`);
     } else {
         showMessageInChapterContainer(`<h4>${escapeHtml(item.title)}</h4><div class="placeholder">No chapter generated yet. Click "Generate Selected Chapter".</div><p class="small text-muted">${escapeHtml(item.description)}</p>`);
     }
+}
+
+if (chapterContainer) {
+    chapterContainer.addEventListener('dblclick', async (event) => {
+        const paragraphEl = event.target.closest('.chapter-paragraph');
+        if (!paragraphEl) return;
+        if (selectedIndex === null) return;
+        const chapter = outline[selectedIndex];
+        if (!chapter || !chapter.chapterText) return;
+
+        const startChar = parseInt(paragraphEl.dataset.start || '0', 10) || 0;
+        logActivity(`🎯 Starting playback from paragraph in chapter ${selectedIndex + 1} (char ${startChar})`);
+
+        try {
+            await requestWakeLock();
+        } catch (e) {
+        }
+
+        playingIndex = selectedIndex;
+        speakChapter(selectedIndex, startChar);
+    });
 }
 
 // Chapter generation
@@ -902,7 +1002,46 @@ generateNextBgBtn.addEventListener('click', async () => {
     });
 });
 
-async function generateChapter(idx, foreground = true) {
+if (generateWholeStoryBtn) {
+    generateWholeStoryBtn.addEventListener('click', async () => {
+        if (isGeneratingWholeStory) return;
+        if (!outline.length) {
+            alert('No outline available. Generate one first.');
+            logActivity('❌ Generate whole story failed: No outline');
+            return;
+        }
+        const chaptersToGenerate = outline
+            .map((chapter, idx) => (!chapter || chapter.chapterText ? null : idx))
+            .filter(idx => idx !== null);
+        if (!chaptersToGenerate.length) {
+            alert('All chapters are already generated.');
+            logActivity('ℹ️ Generate whole story skipped: All chapters done');
+            return;
+        }
+
+        logActivity('📚 Generate Whole Story button pressed');
+        setWholeStoryGenerationState(true);
+        showMessageInChapterContainer('<div class="d-flex align-items-center"><strong>Generating all chapters…</strong><div class="spinner-border ms-3" role="status" aria-hidden="true"></div></div>');
+
+        try {
+            for (const idx of chaptersToGenerate) {
+                await generateChapter(idx, true, {serviceTierOverride: 'flex'});
+            }
+            logActivity('🎉 Whole story generation completed');
+        } catch (err) {
+            console.error('Whole story generation failed', err);
+            logError('Whole story generation failed', err);
+            showError('Whole story generation failed: ' + err.message);
+        } finally {
+            setWholeStoryGenerationState(false);
+            if (selectedIndex !== null && outline[selectedIndex] && outline[selectedIndex].chapterText) {
+                selectOutlineIndex(selectedIndex);
+            }
+        }
+    });
+}
+
+async function generateChapter(idx, foreground = true, options = {}) {
     // If this exact chapter is already being generated, return the existing promise
     if (generatingChapterIndex === idx && chapterGenerationPromise) {
         logActivity(`⏳ Chapter ${idx + 1} generation already in progress, waiting...`);
@@ -966,7 +1105,9 @@ async function generateChapter(idx, foreground = true) {
                 characters: storyCharacters
             };
 
-            const serviceTier = foreground ? null : 'flex';
+            const serviceTier = Object.prototype.hasOwnProperty.call(options, 'serviceTierOverride')
+                ? options.serviceTierOverride
+                : (foreground ? null : 'flex');
 
             const resp = await window.StoryGenerator.generateChapter(
                 apiKey,
@@ -1284,7 +1425,7 @@ function buildStoryExportPayload() {
         storyPrompt: storyPromptInput ? storyPromptInput.value : undefined,
         model: modelSelect ? modelSelect.value : undefined,
         openaiVoice: openaiVoiceSelect ? openaiVoiceSelect.value : undefined,
-        openaiInstructions: openaiInstructionsSelect ? openaiInstructionsSelect.value : undefined,
+        openaiInstructions: getCurrentVoiceInstructions(),
         openaiTTSModel: openaiTTSModelSelect ? openaiTTSModelSelect.value : undefined
     };
 
@@ -1405,10 +1546,15 @@ function applyImportedSettings(importedSettings) {
         } catch (e) {
         }
     }
-    if ('openaiInstructions' in importedSettings && openaiInstructionsSelect) {
-        applySelectValueWithWarning(openaiInstructionsSelect, importedSettings.openaiInstructions, 'voice instructions');
+    if ('openaiInstructions' in importedSettings) {
+        if (openaiInstructionsTextarea) {
+            openaiInstructionsTextarea.value = importedSettings.openaiInstructions || '';
+        }
+        if (openaiInstructionsSelect) {
+            applySelectValueWithWarning(openaiInstructionsSelect, importedSettings.openaiInstructions, 'voice instructions');
+        }
         try {
-            localStorage.setItem(OPENAI_INSTRUCTIONS_STORAGE, openaiInstructionsSelect.value || '');
+            localStorage.setItem(OPENAI_INSTRUCTIONS_STORAGE, importedSettings.openaiInstructions || '');
         } catch (e) {
         }
     }
@@ -1421,6 +1567,7 @@ function applyImportedSettings(importedSettings) {
     }
 
     saveSettings();
+    updateVoiceInstructionsUI();
 
     return missing;
 }
@@ -1444,21 +1591,25 @@ async function speakChapterWithOpenAI(idx, startChar = 0) {
     const item = outline[idx];
     if (!item || !item.chapterText) return;
 
-    // stop any prior audio playback
     cleanupOpenAIAudio();
-
-    // highlight the chapter being spoken and display chapter text immediately
     selectOutlineIndex(idx);
 
+    let normalizedStart = startChar;
     if (startChar > 0 && startChar < item.chapterText.length) {
         logActivity(`🔊 Speaking chapter ${idx + 1} with OpenAI TTS from character ${startChar}: "${item.title}"`);
     } else {
-        startChar = 0; // Reset if invalid
+        normalizedStart = 0;
         logActivity(`🔊 Speaking chapter ${idx + 1} with OpenAI TTS: "${item.title}"`);
     }
 
-    // Save reading position at start
-    saveReadingPosition(idx, startChar);
+    const paragraphs = splitTextIntoParagraphs(item.chapterText);
+    const paragraphStart = normalizeStartCharToParagraph(paragraphs, normalizedStart);
+    if (paragraphStart !== normalizedStart) {
+        logActivity(`ℹ️ Adjusted start to paragraph boundary at character ${paragraphStart}`);
+    }
+    normalizedStart = paragraphStart;
+
+    saveReadingPosition(idx, normalizedStart);
 
     const apiKey = getApiKey();
     if (!apiKey) {
@@ -1473,40 +1624,27 @@ async function speakChapterWithOpenAI(idx, startChar = 0) {
     }
 
     const voice = (openaiVoiceSelect && openaiVoiceSelect.value) || 'alloy';
-    const instructions = (openaiInstructionsSelect && openaiInstructionsSelect.value) || '';
+    const instructions = getCurrentVoiceInstructions();
     const ttsModel = (openaiTTSModelSelect && openaiTTSModelSelect.value) || 'tts-1-hd';
 
     try {
-        // Get the text from startChar onwards
-        const textToSpeak = startChar > 0 ? item.chapterText.substring(startChar) : item.chapterText;
+        const startParagraphIdx = findParagraphIndexByChar(paragraphs, normalizedStart);
+        const paragraphChunks = buildParagraphChunksFromParagraphs(paragraphs, startParagraphIdx, item.chapterText);
 
-        // For quick startup, extract first fragment (first 4 sentences up to 5 lines)
-        let chunks;
-        if (startChar === 0) {
-            const firstFragment = extractFirstFragment(textToSpeak);
-            const remainingText = firstFragment.length < textToSpeak.length 
-                ? textToSpeak.substring(firstFragment.length).trim() 
-                : '';
-            
-            if (remainingText) {
-                // Split the remaining text into chunks
-                const remainingChunks = splitTextIntoChunks(remainingText, 4096);
-                chunks = [firstFragment, ...remainingChunks];
-                logActivity(`📄 Chapter ${idx + 1}: First fragment (${firstFragment.length} chars) + ${remainingChunks.length} additional chunks for OpenAI TTS`);
-            } else {
-                chunks = [firstFragment];
-            }
+        if (!paragraphChunks.length) {
+            logError('OpenAI TTS failed: No readable text', new Error('Empty chapter text'));
+            showError('No chapter text available for playback.');
+            updatePlayButtonState();
+            return;
+        }
+
+        if (paragraphChunks.length > 1) {
+            logActivity(`📄 Chapter ${idx + 1} split into ${paragraphChunks.length} paragraph chunks for OpenAI TTS`);
         } else {
-            // When resuming from a specific position, split normally
-            chunks = splitTextIntoChunks(textToSpeak, 4096);
+            logActivity(`📄 Chapter ${idx + 1} will be spoken in a single paragraph chunk`);
         }
 
-        if (chunks.length > 1) {
-            logActivity(`📄 Chapter ${idx + 1} split into ${chunks.length} chunks for OpenAI TTS`);
-        }
-
-        // Play chunks sequentially
-        await playOpenAIChunks(idx, chunks, startChar, voice, instructions, ttsModel, key);
+        await playOpenAIChunks(idx, paragraphChunks, voice, instructions, ttsModel, key);
 
     } catch (err) {
         console.error('OpenAI TTS error', err);
@@ -1516,76 +1654,60 @@ async function speakChapterWithOpenAI(idx, startChar = 0) {
     }
 }
 
-// Play OpenAI TTS chunks sequentially with background pre-fetching
-async function playOpenAIChunks(chapterIdx, chunks, baseCharOffset, voice, instructions, model, key) {
-    let currentCharOffset = baseCharOffset;
+async function playOpenAIChunks(chapterIdx, chunks, voice, instructions, model, key) {
+    if (!chunks.length) return;
 
-    // Display the chapter text immediately before any fetching with word wrapping
     const item = outline[chapterIdx];
     if (item && item.chapterText) {
-        const wrappedText = wrapTextForHighlighting(item.chapterText);
+        const wrappedText = wrapTextForHighlighting(item.chapterText, chapterIdx);
         showMessageInChapterContainer(`<h4>${escapeHtml(item.title)}</h4><div id="chapter-text">${wrappedText}</div>`);
     }
 
-    // Pre-fetch the first chunk
     let nextChunkPromise = null;
     if (chunks.length > 0) {
-        if (chunks.length > 1) {
-            logActivity(`🔊 Fetching audio chunk 1/${chunks.length} of chapter ${chapterIdx + 1}`);
-        } else {
-            logActivity(`🔊 Fetching audio of chapter ${chapterIdx + 1}`);
-        }
-        nextChunkPromise = fetchOpenAITTS(chunks[0], voice, instructions, model, key);
+        const chunkLabel = chunks.length > 1 ? `chunk 1/${chunks.length}` : 'audio';
+        logActivity(`🔊 Fetching ${chunkLabel} for chapter ${chapterIdx + 1}`);
+        nextChunkPromise = fetchOpenAITTS(chunks[0].text, voice, instructions, model, key);
     }
 
     for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i];
         const isLastChunk = (i === chunks.length - 1);
+        const chunkLength = Math.max(1, chunk.end - chunk.start);
 
-        // Wait for the current chunk to be ready (it was pre-fetched in the previous iteration)
         const buffer = await nextChunkPromise;
         if (!buffer) {
             throw new Error('No audio returned from OpenAI');
         }
 
-        // Start pre-fetching the next chunk in the background (if not the last chunk)
         if (!isLastChunk) {
             const nextChunkIdx = i + 1;
-            if (chunks.length > 1) {
-                logActivity(`🔄 Pre-fetching chunk ${nextChunkIdx + 1}/${chunks.length} in background`);
-            }
-            nextChunkPromise = fetchOpenAITTS(chunks[nextChunkIdx], voice, instructions, model, key);
+            logActivity(`🔄 Pre-fetching chunk ${nextChunkIdx + 1}/${chunks.length} in background`);
+            nextChunkPromise = fetchOpenAITTS(chunks[nextChunkIdx].text, voice, instructions, model, key);
         }
 
         if (chunks.length > 1) {
             logActivity(`🔊 Playing chunk ${i + 1}/${chunks.length} of chapter ${chapterIdx + 1}`);
         }
 
-        // Create blob and object URL
         const blob = new Blob([buffer], {type: 'audio/mpeg'});
         cleanupOpenAIAudio();
         openaiAudioUrl = URL.createObjectURL(blob);
         openaiAudio = new Audio(openaiAudioUrl);
         openaiAudio.crossOrigin = 'anonymous';
 
-        // Save position at start of this chunk and highlight it
-        saveReadingPosition(chapterIdx, currentCharOffset);
-        
-        // Highlight the entire chunk being played
-        highlightChunk(currentCharOffset, currentCharOffset + chunk.length);
+        saveReadingPosition(chapterIdx, chunk.start);
+        highlightParagraphForCharIndex(chunk.start);
 
-        // Track position during playback using timeupdate
-        // Save position periodically but don't update highlights
         let lastSaveTime = 0;
         openaiAudio.ontimeupdate = () => {
             if (openaiAudio && openaiAudio.duration > 0) {
                 const progress = openaiAudio.currentTime / openaiAudio.duration;
-                const charsIntoChunk = Math.floor(chunk.length * progress);
-                const absoluteCharIndex = currentCharOffset + charsIntoChunk;
-                
+                const charsIntoChunk = Math.floor(chunkLength * progress);
+                const absoluteCharIndex = chunk.start + charsIntoChunk;
+                highlightParagraphForCharIndex(absoluteCharIndex);
+
                 const now = Date.now();
-                
-                // Save position at most once per 10 seconds
                 if (now - lastSaveTime > 10000) {
                     saveReadingPosition(chapterIdx, absoluteCharIndex);
                     lastSaveTime = now;
@@ -1653,8 +1775,6 @@ async function playOpenAIChunks(chapterIdx, chunks, baseCharOffset, voice, instr
             openaiAudio.play().catch(reject);
         });
 
-        // Move to next chunk position
-        currentCharOffset += chunk.length;
     }
 }
 

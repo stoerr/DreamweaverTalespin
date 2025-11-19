@@ -138,13 +138,14 @@
                             </select>
                         </div>
 
-                        <div class="mb-2">
+                        <div id="openai-instructions-group" class="mb-2 d-none">
                             <label for="openai-instructions-select" class="form-label">Voice Instructions</label>
                             <select id="openai-instructions-select" class="form-select">
                                 <option value="">Default</option>
                                 <option value="Speak in a calm, soothing whisper-tone, very softly and slowly, with long gentle pauses between sentences. Convey a restful, dreamy mood, as if telling a quiet bedtime story.">Good night story</option>
                                 <option value="Speak in an animated, warm, and engaging storyteller voice. Use a medium-pace tempo, clear enunciation, lively inflection, occasional dramatic pauses, and convey a tone of friendly intrigue and enjoyment. Use vocal variation to depict emotions, scene changes, or characters' moods.">Story teller</option>
                             </select>
+                            <textarea id="openai-instructions-textarea" class="form-control mt-2 d-none" rows="3" placeholder="Customize voice instructions"></textarea>
                         </div>
 
                         <div class="form-text">High quality OpenAI speech (default tts-1-hd). Text limited to ~4096 chars per request.</div>
@@ -167,12 +168,13 @@
                     <div class="card-body">
                         <h5 class="card-title">Chapter</h5>
                         <div id="chapter-container" class="story-container">Select a chapter to generate or play.</div>
-                        <div class="mt-3 d-flex gap-2">
+                        <div class="mt-3 d-flex gap-2 flex-wrap">
                             <button id="generate-chapter" class="btn btn-outline-primary">Generate Selected Chapter
                             </button>
                             <button id="generate-next-bg" class="btn btn-outline-secondary">Generate Next in
                                 Background
                             </button>
+                            <button id="generate-whole-story" class="btn btn-outline-success">Generate Whole Story</button>
                         </div>
                     </div>
                 </div>
