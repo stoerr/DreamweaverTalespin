@@ -38,6 +38,7 @@ const stopBtn = document.getElementById('stop-btn');
 const copyStoryBtn = document.getElementById('copy-story-btn');
 const exportStoryBtn = document.getElementById('export-story-btn');
 const importStoryBtn = document.getElementById('import-story-btn');
+const downloadChapterBtn = document.getElementById('download-chapter-mp3');
 const languageSelect = document.getElementById('language-select');
 const autoplayCheckbox = document.getElementById('autoplay');
 const storyExamplesSelect = document.getElementById('story-examples');
@@ -101,6 +102,8 @@ let currentParagraphs = [];
 let currentParagraphChapterIdx = null;
 let currentHighlightedParagraphIndex = null;
 let isGeneratingWholeStory = false;
+let downloadableChapterUrl = null;
+let downloadableChapterFilename = null;
 
 // OpenAI audio playback element (when using OpenAI TTS)
 let openaiAudio = null; // HTMLAudioElement
@@ -321,6 +324,51 @@ function setWholeStoryGenerationState(running) {
     if (generateWholeStoryBtn) generateWholeStoryBtn.disabled = running;
 }
 
+function slugifyForFilename(text, fallback = 'item', maxLength = 28) {
+    const base = (text || fallback || '').toLowerCase();
+    const sanitized = base.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    if (sanitized) return sanitized.slice(0, maxLength);
+    return (fallback || 'item').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, maxLength) || 'item';
+}
+
+function buildChapterFilename(chapterIdx) {
+    const chapter = outline[chapterIdx];
+    const bookSlug = slugifyForFilename(storyTitle || 'story', 'story');
+    const chapterSlug = slugifyForFilename(chapter?.title || `chapter-${chapterIdx + 1}`, `chapter-${chapterIdx + 1}`);
+    return `${bookSlug}-${chapterSlug}.mp3`;
+}
+
+function resetChapterAudioDownload() {
+    if (downloadableChapterUrl) {
+        try {
+            URL.revokeObjectURL(downloadableChapterUrl);
+        } catch (e) {
+        }
+        downloadableChapterUrl = null;
+    }
+    downloadableChapterFilename = null;
+    if (downloadChapterBtn) {
+        downloadChapterBtn.classList.add('d-none');
+        downloadChapterBtn.disabled = true;
+    }
+}
+
+function prepareChapterAudioDownload(chapterIdx, buffers) {
+    if (!downloadChapterBtn || !buffers || !buffers.length) return;
+    if (downloadableChapterUrl) {
+        try {
+            URL.revokeObjectURL(downloadableChapterUrl);
+        } catch (e) {
+        }
+    }
+    const blob = new Blob(buffers, {type: 'audio/mpeg'});
+    downloadableChapterUrl = URL.createObjectURL(blob);
+    downloadableChapterFilename = buildChapterFilename(chapterIdx);
+    downloadChapterBtn.classList.remove('d-none');
+    downloadChapterBtn.disabled = false;
+    logActivity(`💾 Chapter ${chapterIdx + 1} audio ready for download (${downloadableChapterFilename})`);
+}
+
 // Reset story (clear outline, chapters, and metadata)
 function resetStory() {
     outline = [];
@@ -341,6 +389,7 @@ function resetStory() {
     } catch (e) {
         console.warn('Could not clear story state from storage:', e);
     }
+    resetChapterAudioDownload();
 }
 
 // Update play button enabled/disabled state depending on generation/speaking
@@ -1416,6 +1465,19 @@ if (importStoryBtn) {
     });
 }
 
+if (downloadChapterBtn) {
+    downloadChapterBtn.addEventListener('click', () => {
+        if (!downloadableChapterUrl) return;
+        const link = document.createElement('a');
+        link.href = downloadableChapterUrl;
+        link.download = downloadableChapterFilename || 'chapter.mp3';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        logActivity('⬇️ Chapter audio download initiated');
+    });
+}
+
 function buildStoryExportPayload() {
     const settingsSnapshot = {
         autoplay: autoplayCheckbox ? autoplayCheckbox.checked : undefined,
@@ -1644,7 +1706,8 @@ async function speakChapterWithOpenAI(idx, startChar = 0) {
             logActivity(`📄 Chapter ${idx + 1} will be spoken in a single paragraph chunk`);
         }
 
-        await playOpenAIChunks(idx, paragraphChunks, voice, instructions, ttsModel, key);
+        const captureForDownload = normalizedStart === 0;
+        await playOpenAIChunks(idx, paragraphChunks, voice, instructions, ttsModel, key, captureForDownload);
 
     } catch (err) {
         console.error('OpenAI TTS error', err);
@@ -1654,7 +1717,7 @@ async function speakChapterWithOpenAI(idx, startChar = 0) {
     }
 }
 
-async function playOpenAIChunks(chapterIdx, chunks, voice, instructions, model, key) {
+async function playOpenAIChunks(chapterIdx, chunks, voice, instructions, model, key, captureForDownload = false) {
     if (!chunks.length) return;
 
     const item = outline[chapterIdx];
@@ -1663,6 +1726,7 @@ async function playOpenAIChunks(chapterIdx, chunks, voice, instructions, model, 
         showMessageInChapterContainer(`<h4>${escapeHtml(item.title)}</h4><div id="chapter-text">${wrappedText}</div>`);
     }
 
+    const collectedBuffers = captureForDownload ? [] : null;
     let nextChunkPromise = null;
     if (chunks.length > 0) {
         const chunkLabel = chunks.length > 1 ? `chunk 1/${chunks.length}` : 'audio';
@@ -1670,6 +1734,7 @@ async function playOpenAIChunks(chapterIdx, chunks, voice, instructions, model, 
         nextChunkPromise = fetchOpenAITTS(chunks[0].text, voice, instructions, model, key);
     }
 
+    let chapterCompleted = false;
     for (let i = 0; i < chunks.length; i++) {
         const chunk = chunks[i];
         const isLastChunk = (i === chunks.length - 1);
@@ -1678,6 +1743,9 @@ async function playOpenAIChunks(chapterIdx, chunks, voice, instructions, model, 
         const buffer = await nextChunkPromise;
         if (!buffer) {
             throw new Error('No audio returned from OpenAI');
+        }
+        if (captureForDownload && collectedBuffers) {
+            collectedBuffers.push(buffer);
         }
 
         if (!isLastChunk) {
@@ -1731,6 +1799,7 @@ async function playOpenAIChunks(chapterIdx, chunks, voice, instructions, model, 
                     
                     // This was the last chunk of the chapter
                     logActivity(`✅ Finished speaking chapter ${chapterIdx + 1}: "${outline[chapterIdx].title}"`);
+                    chapterCompleted = true;
                     playingIndex = chapterIdx + 1;
                     updatePlayButtonState();
 
@@ -1775,6 +1844,14 @@ async function playOpenAIChunks(chapterIdx, chunks, voice, instructions, model, 
             openaiAudio.play().catch(reject);
         });
 
+    }
+
+    if (captureForDownload) {
+        if (chapterCompleted && collectedBuffers && collectedBuffers.length) {
+            prepareChapterAudioDownload(chapterIdx, collectedBuffers);
+        } else {
+            resetChapterAudioDownload();
+        }
     }
 }
 
