@@ -21,11 +21,11 @@ Keep these quick facts in mind so you can start working without reading the whol
     - `dev-server.js` — simple dev server (port 3001 by default).
     - `prompts/outline.md` and `prompts/chapter.md` — default system prompts that `app.js` loads on startup.
 - Text-to-speech:
-    - Uses the browser `window.speechSynthesis` voices. `app.js` populates `#voice-select` and `#language-select` (
-      filters voices by language prefix like `en`, `de`).
+    - Uses OpenAI's speech models (`tts-1-hd` default, `gpt-4o-mini-tts` optional) with the controls in the playback
+      card (`#openai-tts-model-select`, `#openai-voice-select`).
 - Quick checklist for first edits / investigation:
     1. Open `Requirements.md` (already required) to understand intended UX and constraints.
     2. Inspect `docs/app.js` for the exact logic you want to change (look for functions named `callOpenAI`,
-       `generateChapter`, `populateVoicesAndLanguages`, `speakChapter`).
+       `generateChapter`, `populateLanguageOptions`, `speakChapter`).
     3. Verify UI element IDs in `docs/index.html` match the selectors in `app.js`.
     4. Check `prompts/outline.md` and `prompts/chapter.md` for default system prompt text.

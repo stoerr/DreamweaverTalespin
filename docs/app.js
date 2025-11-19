@@ -6,11 +6,10 @@ const API_KEY_STORAGE = 'chatgpt_api_key';
 // Key from Requirements.md to store/restore the last story prompt
 const STORY_PROMPT_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.storyprompt';
 // Store last selected voice
-const VOICE_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.voice';
-// Store TTS provider and OpenAI voice
-const TTS_PROVIDER_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.ttsprovider';
+// Store OpenAI TTS preferences
 const OPENAI_VOICE_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.openaivoice';
 const OPENAI_INSTRUCTIONS_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.openaiinstructions';
+const OPENAI_TTS_MODEL_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.openaimodel';
 const MODEL_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.model';
 // Store the complete story state (outline, chapters, metadata)
 const STORY_STATE_STORAGE = 'net.stoerr.aiexperiments.DreamweaverTalespin.storystate';
@@ -36,15 +35,12 @@ const continueBtn = document.getElementById('continue-btn');
 const pauseBtn = document.getElementById('pause-btn');
 const stopBtn = document.getElementById('stop-btn');
 const copyStoryBtn = document.getElementById('copy-story-btn');
-const voiceSelect = document.getElementById('voice-select');
 const languageSelect = document.getElementById('language-select');
 const autoplayCheckbox = document.getElementById('autoplay');
 const storyExamplesSelect = document.getElementById('story-examples');
-// TTS provider controls (will be initialized on DOMContentLoaded)
-let ttsProviderSelect = document.getElementById('tts-provider');
-let openaiVoiceSelect = document.getElementById('openai-voice-select');
-let openaiVoiceContainer = document.getElementById('openai-voice-container');
-let openaiInstructionsSelect = document.getElementById('openai-instructions-select');
+const openaiVoiceSelect = document.getElementById('openai-voice-select');
+const openaiInstructionsSelect = document.getElementById('openai-instructions-select');
+const openaiTTSModelSelect = document.getElementById('openai-tts-model-select');
 const activityLog = document.getElementById('activity-log');
 
 // Activity logging helpers
@@ -95,13 +91,32 @@ let selectedIndex = null;
 let isGenerating = false;
 let generatingChapterIndex = null; // Track which chapter is being generated
 let chapterGenerationPromise = null; // Promise for the current chapter generation
-let synth = window.speechSynthesis;
-let currentUtterance = null;
 let playingIndex = null;
 
 // OpenAI audio playback element (when using OpenAI TTS)
 let openaiAudio = null; // HTMLAudioElement
 let openaiAudioUrl = null; // object URL for current audio blob
+
+function cleanupOpenAIAudio() {
+    if (openaiAudio) {
+        try {
+            openaiAudio.pause();
+        } catch (e) {
+        }
+        openaiAudio = null;
+    }
+    if (openaiAudioUrl) {
+        try {
+            URL.revokeObjectURL(openaiAudioUrl);
+        } catch (e) {
+        }
+        openaiAudioUrl = null;
+    }
+}
+
+function isOpenAIPlaying() {
+    return !!(openaiAudio && !openaiAudio.paused && !openaiAudio.ended);
+}
 
 // Wake Lock object (null when not active)
 let wakeLock = null;
@@ -283,32 +298,13 @@ function resetStory() {
 // Update play button enabled/disabled state depending on generation/speaking
 function updatePlayButtonState() {
     if (!playBtn) return;
-    // Disabled if currently generating or speech synthesis is speaking or OpenAI audio playing
-    const openaiPlaying = openaiAudio && !openaiAudio.paused && !openaiAudio.ended;
-    playBtn.disabled = !!isGenerating || !!synth.speaking || !!openaiPlaying;
-}
-
-// Persist voice selection when user changes it
-if (voiceSelect) {
-    voiceSelect.addEventListener('change', () => {
-        try {
-            localStorage.setItem(VOICE_STORAGE, voiceSelect.value || '');
-        } catch (e) {
-        }
-    });
+    // Disabled if currently generating or OpenAI audio playing
+    const openaiPlaying = isOpenAIPlaying();
+    playBtn.disabled = !!isGenerating || openaiPlaying;
 }
 
 // Prompt for API key if not present; load default prompts; populate voices & languages
 window.addEventListener('DOMContentLoaded', async () => {
-    // Ensure TTS controls exist in the DOM (in case index.html wasn't updated)
-    ensureTTSControls();
-
-    // Re-bind elements (they might have been created dynamically above)
-    ttsProviderSelect = document.getElementById('tts-provider');
-    openaiVoiceSelect = document.getElementById('openai-voice-select');
-    openaiVoiceContainer = document.getElementById('openai-voice-container');
-    openaiInstructionsSelect = document.getElementById('openai-instructions-select');
-
     let apiKey = getApiKey();
     if (!apiKey) {
         const entered = prompt('Please enter your OpenAI API key (will be stored in localStorage at "chatgpt_api_key"):');
@@ -373,19 +369,16 @@ window.addEventListener('DOMContentLoaded', async () => {
         console.warn('Could not read stored story prompt:', e);
     }
 
-    // Restore TTS provider, OpenAI voice, and instructions selection
+    // Restore OpenAI TTS preferences
     try {
-        const prov = localStorage.getItem(TTS_PROVIDER_STORAGE) || 'browser';
-        if (ttsProviderSelect) {
-            ttsProviderSelect.value = prov;
-            toggleOpenAIVoiceContainer(prov === 'openai');
-        }
         const oa = localStorage.getItem(OPENAI_VOICE_STORAGE) || '';
         if (openaiVoiceSelect && oa) openaiVoiceSelect.value = oa;
         const instr = localStorage.getItem(OPENAI_INSTRUCTIONS_STORAGE) || '';
         if (openaiInstructionsSelect && instr) openaiInstructionsSelect.value = instr;
+        const storedTTSModel = localStorage.getItem(OPENAI_TTS_MODEL_STORAGE) || '';
+        if (openaiTTSModelSelect && storedTTSModel) openaiTTSModelSelect.value = storedTTSModel;
     } catch (e) {
-        console.warn('Could not restore TTS provider selection:', e);
+        console.warn('Could not restore OpenAI TTS selection:', e);
     }
 
     // Populate examples dropdown
@@ -428,19 +421,6 @@ window.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    // TTS provider selection handling
-    if (ttsProviderSelect) {
-        ttsProviderSelect.addEventListener('change', () => {
-            const val = ttsProviderSelect.value;
-            toggleOpenAIVoiceContainer(val === 'openai');
-            try {
-                localStorage.setItem(TTS_PROVIDER_STORAGE, val);
-            } catch (e) {
-            }
-            updatePlayButtonState();
-        });
-    }
-
     if (openaiVoiceSelect) {
         openaiVoiceSelect.addEventListener('change', () => {
             try {
@@ -459,9 +439,17 @@ window.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    // Populate voices and language selector
-    populateVoicesAndLanguages();
-    window.speechSynthesis.onvoiceschanged = populateVoicesAndLanguages;
+    if (openaiTTSModelSelect) {
+        openaiTTSModelSelect.addEventListener('change', () => {
+            try {
+                localStorage.setItem(OPENAI_TTS_MODEL_STORAGE, openaiTTSModelSelect.value || '');
+            } catch (e) {
+            }
+        });
+    }
+
+    // Populate language selector
+    populateLanguageOptions();
 
     // Save settings when changed
     if (autoplayCheckbox) {
@@ -504,17 +492,13 @@ function setupTextareaAutoResize() {
     });
 }
 
-// Populate voices and languages
-function populateVoicesAndLanguages() {
-    // Build languages set from voice.lang (prefix before '-')
-    // const langs = Array.from(new Set(voices.map(v => (v.lang || 'unknown').split('-')[0]))).filter(Boolean).sort();
+// Populate languages available to the generator UI
+function populateLanguageOptions() {
     const langs = ['en', 'de', 'es', 'fr'];
 
-    // Populate languageSelect if present
     if (languageSelect) {
         const prev = languageSelect.value;
         languageSelect.innerHTML = '';
-        // add an 'any' option
         const anyOpt = document.createElement('option');
         anyOpt.value = '';
         anyOpt.textContent = 'Any';
@@ -525,88 +509,13 @@ function populateVoicesAndLanguages() {
             opt.textContent = l;
             languageSelect.appendChild(opt);
         });
-        // If user had a previous selection, restore it. Otherwise prefer English if available.
         if (prev) languageSelect.value = prev;
         else if (langs.includes('en')) languageSelect.value = 'en';
-    }
-
-    // Populate voiceSelect filtered by language
-    refreshVoiceSelect();
-}
-
-function refreshVoiceSelect() {
-    const voices = synth.getVoices();
-    const lang = (languageSelect && languageSelect.value) || '';
-    // remember previous selection and stored selection
-    const prevSelection = voiceSelect ? voiceSelect.value : '';
-    const storedSelection = (function () {
-        try {
-            return localStorage.getItem(VOICE_STORAGE) || '';
-        } catch (e) {
-            return '';
-        }
-    })();
-    voiceSelect.innerHTML = '';
-
-    // Filter voices by language - more robust filtering for mobile (handle - and _ separators)
-    const filtered = voices.filter(v => {
-        if (!lang) return true; // any
-        const voiceLang = (v.lang || '').toLowerCase();
-        const langPrefix = voiceLang.split(/[-_]/)[0];
-        const langLower = lang.toLowerCase();
-        return langPrefix === langLower || voiceLang === langLower || voiceLang.startsWith(langLower + '-') || voiceLang.startsWith(langLower + '_');
-    });
-
-    // If no voices match the language, fall back to all voices
-    const toShow = filtered.length ? filtered : voices;
-
-    // Sort voices by a simple quality heuristic: default and known high-quality providers first, then language match
-    function voiceQualityScore(v) {
-        let score = 0;
-        if (v.default) score += 100;
-        const name = (v.name || '').toLowerCase();
-        // Prefer localService voices where possible (more likely honored on mobile)
-        if (v.localService) score += 30;
-        if (name.includes('google') || name.includes('neural') || name.includes('premium') || name.includes('high')) score += 50;
-        if (name.includes('microsoft') || name.includes('azure')) score += 40;
-        // prefer exact language match
-        if (languageSelect && languageSelect.value) {
-            const p = (v.lang || '').toLowerCase().split(/[-_]/)[0];
-            if (p === languageSelect.value.toLowerCase()) score += 20;
-        }
-        // shorter, clean names slightly preferred
-        score += Math.max(0, 10 - (v.name || '').length * 0.1);
-        return score;
-    }
-
-    toShow.sort((a, b) => voiceQualityScore(b) - voiceQualityScore(a));
-    toShow.forEach(v => {
-        const opt = document.createElement('option');
-        // Use voiceURI as the option value to uniquely identify voices across browsers (fallback to name)
-        opt.value = v.voiceURI || v.name;
-        opt.textContent = `${v.name} (${v.lang})${v.default ? ' — default' : ''}`;
-        voiceSelect.appendChild(opt);
-    });
-
-    // Try to restore previous selection (current UI selection), then stored selection, otherwise select top
-    if (voiceSelect.options.length) {
-        if (prevSelection && Array.from(voiceSelect.options).some(o => o.value === prevSelection)) {
-            voiceSelect.value = prevSelection;
-        } else if (storedSelection && Array.from(voiceSelect.options).some(o => o.value === storedSelection)) {
-            voiceSelect.value = storedSelection;
-        } else {
-            voiceSelect.selectedIndex = 0;
-            try {
-                localStorage.setItem(VOICE_STORAGE, voiceSelect.value || '');
-            } catch (e) {
-            }
-        }
     }
 }
 
 if (languageSelect) {
     languageSelect.addEventListener('change', () => {
-        refreshVoiceSelect();
         saveSettings();
     });
 }
@@ -662,19 +571,6 @@ function getLanguageCode() {
         return v ? v : null;
     } catch (e) {
         return null;
-    }
-}
-
-// Show/hide OpenAI voice container based on TTS provider selection
-function toggleOpenAIVoiceContainer(show) {
-    if (!openaiVoiceContainer) return;
-    const browserVoiceContainer = document.getElementById('browser-voice-container');
-    if (show) {
-        openaiVoiceContainer.classList.remove('d-none');
-        if (browserVoiceContainer) browserVoiceContainer.classList.add('d-none');
-    } else {
-        openaiVoiceContainer.classList.add('d-none');
-        if (browserVoiceContainer) browserVoiceContainer.classList.remove('d-none');
     }
 }
 
@@ -796,7 +692,7 @@ async function releaseWakeLock() {
 document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState === 'visible') {
         // attempt to re-acquire if speech is ongoing
-        if (synth.speaking) {
+        if (isOpenAIPlaying()) {
             try {
                 await requestWakeLock();
             } catch (e) {
@@ -884,18 +780,7 @@ newStoryBtn.addEventListener('click', () => {
     if (confirmed) {
         logActivity('🆕 New Story button pressed');
         // Stop any ongoing playback
-        try {
-            synth.cancel();
-        } catch (e) {
-            // ignore
-        }
-        if (openaiAudio) {
-            try {
-                openaiAudio.pause();
-                openaiAudio.currentTime = 0;
-            } catch (e) {
-            }
-        }
+        cleanupOpenAIAudio();
         resetStory();
     }
 });
@@ -1248,17 +1133,9 @@ continueBtn.addEventListener('click', async () => {
 
 pauseBtn.addEventListener('click', () => {
     logActivity('⏸️ Pause/Resume button pressed');
-    const provider = (ttsProviderSelect && ttsProviderSelect.value) || 'browser';
-    if (provider === 'openai') {
-        if (openaiAudio) {
-            if (openaiAudio.paused) openaiAudio.play();
-            else openaiAudio.pause();
-        }
-    } else {
-        if (synth.speaking) {
-            if (synth.paused) synth.resume();
-            else synth.pause();
-        }
+    if (openaiAudio) {
+        if (openaiAudio.paused) openaiAudio.play();
+        else openaiAudio.pause();
     }
 });
 
@@ -1267,26 +1144,7 @@ stopBtn.addEventListener('click', async () => {
     // Clear any TTS highlights
     clearTTSHighlights();
     
-    // Stop both possible playback mechanisms
-    try {
-        synth.cancel();
-    } catch (e) {
-        // ignore
-    }
-    if (openaiAudio) {
-        try {
-            openaiAudio.pause();
-            openaiAudio.currentTime = 0;
-        } catch (e) {
-        }
-        if (openaiAudioUrl) {
-            try { URL.revokeObjectURL(openaiAudioUrl); } catch (e) {}
-            openaiAudioUrl = null;
-        }
-        openaiAudio = null;
-    }
-
-    currentUtterance = null;
+    cleanupOpenAIAudio();
     playingIndex = null;
     // Release wake lock when stopping playback
     try {
@@ -1371,237 +1229,15 @@ copyStoryBtn.addEventListener('click', async () => {
 });
 
 function speakChapter(idx, startChar = 0) {
-    const provider = (ttsProviderSelect && ttsProviderSelect.value) || 'browser';
-    if (provider === 'openai') {
-        speakChapterWithOpenAI(idx, startChar);
-    } else {
-        speakChapterWithBrowser(idx, startChar);
-    }
-}
-
-function speakChapterWithBrowser(idx, startChar = 0) {
-    const item = outline[idx];
-    if (!item || !item.chapterText) return;
-
-    // stop current
-    synth.cancel();
-
-    // highlight the chapter being spoken and display chapter text immediately
-    selectOutlineIndex(idx);
-
-    // Get the text to speak (from startChar onwards if resuming)
-    let fullTextToSpeak = item.chapterText;
-    if (startChar > 0 && startChar < item.chapterText.length) {
-        fullTextToSpeak = item.chapterText.substring(startChar);
-        logActivity(`🔊 Speaking chapter ${idx + 1} with browser TTS from character ${startChar}: "${item.title}"`);
-    } else {
-        startChar = 0; // Reset if invalid
-        logActivity(`🔊 Speaking chapter ${idx + 1} with browser TTS: "${item.title}"`);
-    }
-
-    // Save reading position at start
-    saveReadingPosition(idx, startChar);
-
-    // For quick startup, extract first fragment (first 4 sentences up to 5 lines)
-    const firstFragment = startChar === 0 ? extractFirstFragment(fullTextToSpeak) : fullTextToSpeak;
-    const remainingText = startChar === 0 && firstFragment.length < fullTextToSpeak.length 
-        ? fullTextToSpeak.substring(firstFragment.length).trim() 
-        : '';
-
-    const utter = new SpeechSynthesisUtterance(firstFragment);
-    const selectedVoiceValue = voiceSelect.value;
-    const voices = synth.getVoices();
-
-    // Prefer matching by voiceURI (more stable/unique across platforms), then fall back to name matches
-    let v = voices.find(x => x.voiceURI === selectedVoiceValue);
-
-    // Fallback 1: Try case-insensitive match on voiceURI
-    if (!v) {
-        v = voices.find(x => (x.voiceURI || '').toLowerCase() === (selectedVoiceValue || '').toLowerCase());
-    }
-
-    // Fallback 2: Try exact name match
-    if (!v) {
-        v = voices.find(x => x.name === selectedVoiceValue);
-    }
-
-    // Fallback 3: Try case-insensitive name match
-    if (!v) {
-        v = voices.find(x => (x.name || '').toLowerCase() === (selectedVoiceValue || '').toLowerCase());
-    }
-
-    // Fallback 4: Try partial match
-    if (!v) {
-        v = voices.find(x => (x.name || '').includes(selectedVoiceValue) || (selectedVoiceValue || '').includes(x.name || ''));
-    }
-
-    if (v) {
-        utter.voice = v;
-        // Also hint the utterance language to increase chance the browser honors the selected voice
-        try {
-            if (v.lang) utter.lang = v.lang;
-        } catch (e) {
-        }
-        console.log(`Using voice: ${v.name} (${v.lang})`);
-    } else {
-        console.warn(`Could not find voice "${selectedVoiceValue}", using browser default`);
-    }
-
-    // when speaking starts, update UI state and highlight the chunk
-    utter.onstart = () => {
-        updatePlayButtonState();
-        // Highlight the chunk being spoken (from startChar to startChar + firstFragment.length)
-        highlightChunk(startChar, startChar + firstFragment.length);
-    };
-
-    // Track position as we speak (boundary event fires at word boundaries)
-    // Save position periodically but don't update highlights
-    let lastSaveTime = 0;
-    utter.onboundary = (event) => {
-        if (event.charIndex !== undefined) {
-            const absoluteCharIndex = startChar + event.charIndex;
-            
-            const now = Date.now();
-            // Save position at most once per second
-            if (now - lastSaveTime > 1000) {
-                saveReadingPosition(idx, absoluteCharIndex);
-                lastSaveTime = now;
-            }
-        }
-    };
-
-    utter.onend = () => {
-        // If there's remaining text to speak, speak it now
-        if (remainingText) {
-            logActivity(`🔊 Continuing chapter ${idx + 1} with remaining text`);
-            const remainingUtter = new SpeechSynthesisUtterance(remainingText);
-            if (v) {
-                remainingUtter.voice = v;
-                try {
-                    if (v.lang) remainingUtter.lang = v.lang;
-                } catch (e) {}
-            }
-            // Highlight the chunk being spoken and track position for remaining text
-            remainingUtter.onstart = () => {
-                // Highlight the remaining chunk (from firstFragment end to end of text)
-                highlightChunk(startChar + firstFragment.length, startChar + fullTextToSpeak.length);
-            };
-            
-            let lastSaveTime2 = 0;
-            remainingUtter.onboundary = (event) => {
-                if (event.charIndex !== undefined) {
-                    const absoluteCharIndex = startChar + firstFragment.length + event.charIndex;
-                    
-                    const now = Date.now();
-                    if (now - lastSaveTime2 > 1000) {
-                        saveReadingPosition(idx, absoluteCharIndex);
-                        lastSaveTime2 = now;
-                    }
-                }
-            };
-            
-            remainingUtter.onend = () => {
-                // Clear highlights when chapter finishes
-                clearTTSHighlights();
-                
-                // when a chapter finishes, automatically play next (if exists)
-                logActivity(`✅ Finished speaking chapter ${idx + 1}: "${item.title}"`);
-                playingIndex = idx + 1;
-                updatePlayButtonState();
-                if (playingIndex < outline.length) {
-                    // only autoplay if enabled
-                    if (autoplayCheckbox && !autoplayCheckbox.checked) {
-                        logActivity(`⏸️ Autoplay disabled, stopping at chapter ${playingIndex}`);
-                        return;
-                    }
-                    // ensure next is generated (generate in background if needed) and then speak it
-                    if (outline[playingIndex].chapterText) {
-                        // small timeout to allow background tasks to settle
-                        setTimeout(() => speakChapter(playingIndex), 200);
-                    } else {
-                        // Chapter not ready - wait for it to be generated
-                        logActivity(`⏳ Waiting for chapter ${playingIndex + 1} to be generated...`);
-                        generateChapter(playingIndex, true).then(() => {
-                            logActivity(`▶️ Continuing autoplay with chapter ${playingIndex + 1}`);
-                            speakChapter(playingIndex);
-                        }).catch(err => {
-                            logError(`Failed to generate chapter ${playingIndex + 1} for autoplay`, err);
-                        });
-                    }
-                } else {
-                    // finished all - release wake lock
-                    logActivity(`🎉 All chapters completed!`);
-                    try {
-                        releaseWakeLock();
-                    } catch (e) {
-                        // ignore
-                    }
-                    playingIndex = null;
-                }
-            };
-            
-            remainingUtter.onerror = (e) => {
-                logError(`Speech error on chapter ${idx + 1} (remaining text)`, e);
-                console.error('Speech error', e);
-            };
-            
-            synth.speak(remainingUtter);
-        } else {
-            // No remaining text, this was the complete chapter
-            clearTTSHighlights();
-            
-            logActivity(`✅ Finished speaking chapter ${idx + 1}: "${item.title}"`);
-            playingIndex = idx + 1;
-            updatePlayButtonState();
-            if (playingIndex < outline.length) {
-                // only autoplay if enabled
-                if (autoplayCheckbox && !autoplayCheckbox.checked) {
-                    logActivity(`⏸️ Autoplay disabled, stopping at chapter ${playingIndex}`);
-                    return;
-                }
-                // ensure next is generated (generate in background if needed) and then speak it
-                if (outline[playingIndex].chapterText) {
-                    // small timeout to allow background tasks to settle
-                    setTimeout(() => speakChapter(playingIndex), 200);
-                } else {
-                    // Chapter not ready - wait for it to be generated
-                    logActivity(`⏳ Waiting for chapter ${playingIndex + 1} to be generated...`);
-                    generateChapter(playingIndex, true).then(() => {
-                        logActivity(`▶️ Continuing autoplay with chapter ${playingIndex + 1}`);
-                        speakChapter(playingIndex);
-                    }).catch(err => {
-                        logError(`Failed to generate chapter ${playingIndex + 1} for autoplay`, err);
-                    });
-                }
-            } else {
-                // finished all - release wake lock
-                logActivity(`🎉 All chapters completed!`);
-                try {
-                    releaseWakeLock();
-                } catch (e) {
-                    // ignore
-                }
-                playingIndex = null;
-            }
-        }
-    };
-
-    utter.onerror = (e) => {
-        logError(`Speech error on chapter ${idx + 1}`, e);
-        console.error('Speech error', e);
-    };
-
-    currentUtterance = utter;
-    updatePlayButtonState();
-    synth.speak(utter);
+    return speakChapterWithOpenAI(idx, startChar);
 }
 
 async function speakChapterWithOpenAI(idx, startChar = 0) {
     const item = outline[idx];
     if (!item || !item.chapterText) return;
 
-    // stop browser synth if running
-    try { synth.cancel(); } catch (e) {}
+    // stop any prior audio playback
+    cleanupOpenAIAudio();
 
     // highlight the chapter being spoken and display chapter text immediately
     selectOutlineIndex(idx);
@@ -1630,6 +1266,7 @@ async function speakChapterWithOpenAI(idx, startChar = 0) {
 
     const voice = (openaiVoiceSelect && openaiVoiceSelect.value) || 'alloy';
     const instructions = (openaiInstructionsSelect && openaiInstructionsSelect.value) || '';
+    const ttsModel = (openaiTTSModelSelect && openaiTTSModelSelect.value) || 'tts-1-hd';
 
     try {
         // Get the text from startChar onwards
@@ -1661,7 +1298,7 @@ async function speakChapterWithOpenAI(idx, startChar = 0) {
         }
 
         // Play chunks sequentially
-        await playOpenAIChunks(idx, chunks, startChar, voice, instructions, key);
+        await playOpenAIChunks(idx, chunks, startChar, voice, instructions, ttsModel, key);
 
     } catch (err) {
         console.error('OpenAI TTS error', err);
@@ -1672,7 +1309,7 @@ async function speakChapterWithOpenAI(idx, startChar = 0) {
 }
 
 // Play OpenAI TTS chunks sequentially with background pre-fetching
-async function playOpenAIChunks(chapterIdx, chunks, baseCharOffset, voice, instructions, key) {
+async function playOpenAIChunks(chapterIdx, chunks, baseCharOffset, voice, instructions, model, key) {
     let currentCharOffset = baseCharOffset;
 
     // Display the chapter text immediately before any fetching with word wrapping
@@ -1690,7 +1327,7 @@ async function playOpenAIChunks(chapterIdx, chunks, baseCharOffset, voice, instr
         } else {
             logActivity(`🔊 Fetching audio of chapter ${chapterIdx + 1}`);
         }
-        nextChunkPromise = fetchOpenAITTS(chunks[0], voice, instructions, key);
+        nextChunkPromise = fetchOpenAITTS(chunks[0], voice, instructions, model, key);
     }
 
     for (let i = 0; i < chunks.length; i++) {
@@ -1709,7 +1346,7 @@ async function playOpenAIChunks(chapterIdx, chunks, baseCharOffset, voice, instr
             if (chunks.length > 1) {
                 logActivity(`🔄 Pre-fetching chunk ${nextChunkIdx + 1}/${chunks.length} in background`);
             }
-            nextChunkPromise = fetchOpenAITTS(chunks[nextChunkIdx], voice, instructions, key);
+            nextChunkPromise = fetchOpenAITTS(chunks[nextChunkIdx], voice, instructions, model, key);
         }
 
         if (chunks.length > 1) {
@@ -1718,15 +1355,8 @@ async function playOpenAIChunks(chapterIdx, chunks, baseCharOffset, voice, instr
 
         // Create blob and object URL
         const blob = new Blob([buffer], {type: 'audio/mpeg'});
-        if (openaiAudioUrl) {
-            try { URL.revokeObjectURL(openaiAudioUrl); } catch (e) {}
-            openaiAudioUrl = null;
-        }
+        cleanupOpenAIAudio();
         openaiAudioUrl = URL.createObjectURL(blob);
-        if (openaiAudio) {
-            try { openaiAudio.pause(); } catch (e) {}
-            openaiAudio = null;
-        }
         openaiAudio = new Audio(openaiAudioUrl);
         openaiAudio.crossOrigin = 'anonymous';
 
@@ -1820,10 +1450,10 @@ async function playOpenAIChunks(chapterIdx, chunks, baseCharOffset, voice, instr
     }
 }
 
-async function fetchOpenAITTS(text, voice, instructions, apiKey) {
+async function fetchOpenAITTS(text, voice, instructions, model, apiKey) {
     // Call OpenAI TTS endpoint - return ArrayBuffer of audio (MP3)
     const payload = {
-        model: 'gpt-4o-mini-tts',
+        model: model || 'tts-1-hd',
         voice: voice,
         input: text
     };
@@ -1854,114 +1484,4 @@ async function fetchOpenAITTS(text, voice, instructions, apiKey) {
     }
 
     return await resp.arrayBuffer();
-}
-
-// Insert TTS provider and OpenAI voice controls into the Playback card if missing
-function ensureTTSControls() {
-    try {
-        if (document.getElementById('tts-provider')) return; // already present
-
-        // Find the playback card-body by searching for a card with h5 text 'Playback'
-        const cardBodies = Array.from(document.querySelectorAll('.card .card-body'));
-        let playbackBody = null;
-        for (const b of cardBodies) {
-            const h5 = b.querySelector('h5.card-title');
-            if (h5 && (h5.textContent || '').trim().toLowerCase() === 'playback') {
-                playbackBody = b;
-                break;
-            }
-        }
-        if (!playbackBody) return;
-
-        // Create provider select
-        const provDiv = document.createElement('div');
-        provDiv.className = 'mb-3';
-        const provLabel = document.createElement('label');
-        provLabel.htmlFor = 'tts-provider';
-        provLabel.className = 'form-label';
-        provLabel.textContent = 'TTS Provider';
-        const provSelect = document.createElement('select');
-        provSelect.id = 'tts-provider';
-        provSelect.className = 'form-select';
-        const optBrowser = document.createElement('option');
-        optBrowser.value = 'browser';
-        optBrowser.textContent = 'Browser (Web Speech API)';
-        const optOpenAI = document.createElement('option');
-        optOpenAI.value = 'openai';
-        optOpenAI.textContent = 'OpenAI (gpt-4o-mini-tts)';
-        provSelect.appendChild(optBrowser);
-        provSelect.appendChild(optOpenAI);
-        provDiv.appendChild(provLabel);
-        provDiv.appendChild(provSelect);
-
-        // Insert provider select before the existing voice-select (if present) or at end
-        const existingVoice = playbackBody.querySelector('#voice-select');
-        if (existingVoice && existingVoice.parentElement) {
-            existingVoice.parentElement.insertBefore(provDiv, existingVoice.parentElement.firstChild);
-        } else {
-            playbackBody.appendChild(provDiv);
-        }
-
-        // Create OpenAI voice container
-        const oaDiv = document.createElement('div');
-        oaDiv.id = 'openai-voice-container';
-        oaDiv.className = 'mt-3 d-none';
-
-        // Voice select
-        const oaLabel = document.createElement('label');
-        oaLabel.htmlFor = 'openai-voice-select';
-        oaLabel.className = 'form-label';
-        oaLabel.textContent = 'OpenAI Voice';
-        const oaSelect = document.createElement('select');
-        oaSelect.id = 'openai-voice-select';
-        oaSelect.className = 'form-select mb-3';
-        const voices = ['alloy','ash','ballad','coral','echo','fable','nova','onyx','sage','shimmer'];
-        for (const v of voices) {
-            const o = document.createElement('option');
-            o.value = v;
-            o.textContent = v;
-            oaSelect.appendChild(o);
-        }
-
-        // Instructions select
-        const instrLabel = document.createElement('label');
-        instrLabel.htmlFor = 'openai-instructions-select';
-        instrLabel.className = 'form-label';
-        instrLabel.textContent = 'Voice Instructions';
-        const instrSelect = document.createElement('select');
-        instrSelect.id = 'openai-instructions-select';
-        instrSelect.className = 'form-select';
-
-        const instrOptions = [
-            { value: '', label: 'Default' },
-            { value: 'Speak in a calm, soothing whisper-tone, very softly and slowly, with long gentle pauses between sentences. Convey a restful, dreamy mood, as if telling a quiet bedtime story.', label: 'Good night story' },
-            { value: 'Speak in an animated, warm, and engaging storyteller voice. Use a medium-pace tempo, clear enunciation, lively inflection, occasional dramatic pauses, and convey a tone of friendly intrigue and enjoyment. Use vocal variation to depict emotions, scene changes, or characters\' moods.', label: 'Story teller' }
-        ];
-
-        for (const opt of instrOptions) {
-            const o = document.createElement('option');
-            o.value = opt.value;
-            o.textContent = opt.label;
-            instrSelect.appendChild(o);
-        }
-
-        const hint = document.createElement('div');
-        hint.className = 'form-text';
-        hint.textContent = 'OpenAI TTS with gpt-4o-mini-tts. Text limited to 4096 chars.';
-
-        oaDiv.appendChild(oaLabel);
-        oaDiv.appendChild(oaSelect);
-        oaDiv.appendChild(instrLabel);
-        oaDiv.appendChild(instrSelect);
-        oaDiv.appendChild(hint);
-
-        // Insert after voice select if present
-        if (existingVoice && existingVoice.parentElement) {
-            existingVoice.parentElement.appendChild(oaDiv);
-        } else {
-            playbackBody.appendChild(oaDiv);
-        }
-    } catch (e) {
-        console.warn('Could not inject TTS controls:', e);
-    }
 }

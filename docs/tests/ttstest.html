@@ -1,4 +1,5 @@
 <!doctype html>
+<!-- self contained test for text-to-speech synthesis issues -->
 <html lang="en">
 <head>
     <meta charset="utf-8">
@@ -122,6 +123,35 @@
                 <div class="help-text">When enabled the app will attempt to call OpenAI's Text-to-Speech API and play the returned audio instead of using the browser's SpeechSynthesis. The OpenAI API key is read from localStorage key <code>chatgpt_api_key</code> (you will be prompted to enter it if missing).</div>
             </div>
         </div>
+
+        <!-- Model selection for OpenAI TTS -->
+        <label for="openai-model-select" style="margin-top:10px">OpenAI TTS model</label>
+        <select id="openai-model-select">
+            <option value="tts-1-hd">tts-1-hd (high quality)</option>
+            <option value="tts-1">tts-1 (standard)</option>
+            <!-- Keep a legacy/default option available in case APIs differ -->
+            <option value="gpt-4o-mini-tts">gpt-4o-mini-tts (legacy/default)</option>
+        </select>
+
+        <!-- Voice selection for OpenAI TTS -->
+        <label for="openai-voice-select" style="margin-top:10px">OpenAI TTS voice</label>
+        <select id="openai-voice-select">
+            <option value="alloy">alloy</option>
+            <option value="ash">ash</option>
+            <option value="ballad">ballad</option>
+            <option value="coral">coral</option>
+            <option value="echo">echo</option>
+            <option value="fable">fable</option>
+            <option value="nova">nova</option>
+            <option value="onyx">onyx</option>
+            <option value="sage">sage</option>
+            <option value="shimmer">shimmer</option>
+        </select>
+
+        <!-- Instructions textarea for OpenAI TTS -->
+        <label for="openai-tts-instructions" style="margin-top:10px">TTS Instructions (optional)</label>
+        <textarea id="openai-tts-instructions" rows="3" placeholder="e.g. speak slowly; warm tone; emphasize punctuation"></textarea>
+        <div class="help-text">Optional instructions to influence the TTS output (will be sent with the OpenAI TTS request if provided).</div>
     </div>
 </div>
 
@@ -153,6 +183,9 @@
 
     const synth = window.speechSynthesis;
     let currentUtterance = null;
+    const openaiModelSelect = document.getElementById('openai-model-select');
+    const openaiVoiceSelect = document.getElementById('openai-voice-select');
+    const openaiInstructions = document.getElementById('openai-tts-instructions');
 
     // Logging function
     function log(message) {
@@ -201,7 +234,8 @@
         // Choose endpoint and model - may need updating depending on OpenAI's current API.
         // This uses the v1/audio/speech endpoint which returns audio binary data (e.g. audio/mpeg).
         const endpoint = 'https://api.openai.com/v1/audio/speech';
-        const model = 'gpt-4o-mini-tts'; // reasonable default; change if needed
+        // Respect the selected model from the dropdown; fall back to a sensible default
+        const model = (openaiModelSelect && openaiModelSelect.value) ? openaiModelSelect.value : 'tts-1-hd';
 
         speakBtn.disabled = true;
         log('openaiSpeak: sending request to OpenAI TTS');
@@ -209,9 +243,19 @@
         try {
             const payload = {
                 model: model,
-                voice: 'alloy', // example voice name - may vary by API availability
+                // Use the selected OpenAI voice from the dropdown if available, otherwise keep 'alloy'
+                voice: (openaiVoiceSelect && openaiVoiceSelect.value) ? openaiVoiceSelect.value : 'alloy',
                 input: text
             };
+
+            // If the optional instructions textarea contains content, include it in the payload.
+            try {
+                if (openaiInstructions && openaiInstructions.value && openaiInstructions.value.trim()) {
+                    payload.instructions = openaiInstructions.value.trim();
+                }
+            } catch (e) {
+                // non-fatal; continue without instructions
+            }
 
             // Many OpenAI TTS endpoints return audio binary. We'll request 'audio/mpeg' via Accept header.
             const res = await fetch(endpoint, {

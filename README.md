@@ -85,8 +85,8 @@ visible immediately.
 
 - If the editor prompts for a file that doesn't exist (e.g. `server.js`), note that the correct development server file
   is `dev-server.js` in the repository root.
-- If voices don't appear in the voice selector immediately, try reloading the page or wait for
-  `speechSynthesis.onvoiceschanged` to populate the list (this is browser-dependent).
+- If playback fails, double-check that your OpenAI API key is valid and that you've selected a supported OpenAI TTS
+  model (default `tts-1-hd`).
 
 ## License
 
