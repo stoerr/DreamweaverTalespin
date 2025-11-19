@@ -35,6 +35,8 @@ const continueBtn = document.getElementById('continue-btn');
 const pauseBtn = document.getElementById('pause-btn');
 const stopBtn = document.getElementById('stop-btn');
 const copyStoryBtn = document.getElementById('copy-story-btn');
+const exportStoryBtn = document.getElementById('export-story-btn');
+const importStoryBtn = document.getElementById('import-story-btn');
 const languageSelect = document.getElementById('language-select');
 const autoplayCheckbox = document.getElementById('autoplay');
 const storyExamplesSelect = document.getElementById('story-examples');
@@ -1227,6 +1229,212 @@ copyStoryBtn.addEventListener('click', async () => {
         alert('Failed to copy to clipboard. Please check browser permissions.');
     }
 });
+
+if (exportStoryBtn) {
+    exportStoryBtn.addEventListener('click', async () => {
+        logActivity('📤 Export Story Data button pressed');
+        try {
+            const payload = buildStoryExportPayload();
+            const json = JSON.stringify(payload, null, 2);
+            await navigator.clipboard.writeText(json);
+            const chapters = payload.storyState && Array.isArray(payload.storyState.outline)
+                ? payload.storyState.outline.length
+                : 0;
+            logActivity(`✅ Exported story data to clipboard (${chapters} outline entries)`);
+        } catch (err) {
+            logError('Failed to export story data', err);
+            alert('Failed to copy the export JSON to the clipboard. Please check browser permissions.');
+        }
+    });
+}
+
+if (importStoryBtn) {
+    importStoryBtn.addEventListener('click', () => {
+        logActivity('📥 Import Story Data button pressed');
+        const raw = prompt('Paste the JSON that was created by "Export Story Data":');
+        if (!raw) {
+            logActivity('ℹ️ Import cancelled: No data provided');
+            return;
+        }
+        let parsed;
+        try {
+            parsed = JSON.parse(raw);
+        } catch (err) {
+            logError('Import failed: Invalid JSON input', err);
+            alert('The provided text is not valid JSON. Please try again.');
+            return;
+        }
+
+        try {
+            applyImportedStoryData(parsed);
+            logActivity('✅ Story data imported');
+        } catch (err) {
+            logError('Failed to apply imported story data', err);
+            alert('The story data could not be imported. Check the log for details.');
+        }
+    });
+}
+
+function buildStoryExportPayload() {
+    const settingsSnapshot = {
+        autoplay: autoplayCheckbox ? autoplayCheckbox.checked : undefined,
+        language: languageSelect ? languageSelect.value : undefined,
+        outlineSystemPrompt: outlineSystemPromptInput ? outlineSystemPromptInput.value : undefined,
+        chapterSystemPrompt: chapterSystemPromptInput ? chapterSystemPromptInput.value : undefined,
+        storyPrompt: storyPromptInput ? storyPromptInput.value : undefined,
+        model: modelSelect ? modelSelect.value : undefined,
+        openaiVoice: openaiVoiceSelect ? openaiVoiceSelect.value : undefined,
+        openaiInstructions: openaiInstructionsSelect ? openaiInstructionsSelect.value : undefined,
+        openaiTTSModel: openaiTTSModelSelect ? openaiTTSModelSelect.value : undefined
+    };
+
+    return {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        settings: settingsSnapshot,
+        storyState: {
+            outline: outline,
+            storyTitle,
+            storySubtitle,
+            storyDescription,
+            storyCharacters,
+            selectedIndex
+        },
+        readingPosition: loadReadingPosition()
+    };
+}
+
+function applyImportedStoryData(payload) {
+    if (!payload || typeof payload !== 'object') {
+        throw new Error('Import payload must be an object');
+    }
+
+    const missingSettings = applyImportedSettings(payload.settings);
+
+    const importedStory = payload.storyState;
+    if (importedStory && Array.isArray(importedStory.outline)) {
+        outline = importedStory.outline;
+        storyTitle = importedStory.storyTitle || null;
+        storySubtitle = importedStory.storySubtitle || null;
+        storyDescription = importedStory.storyDescription || null;
+        storyCharacters = importedStory.storyCharacters || null;
+        selectedIndex = typeof importedStory.selectedIndex === 'number' ? importedStory.selectedIndex : null;
+
+        if (selectedIndex !== null && !outline[selectedIndex]) {
+            selectedIndex = null;
+        }
+
+        renderOutline();
+        if (selectedIndex !== null) {
+            selectOutlineIndex(selectedIndex);
+        } else if (outline.length > 0) {
+            showMessageInChapterContainer('<div class="placeholder">Story imported. Select a chapter to view or generate.</div>');
+        } else {
+            showMessageInChapterContainer('<div class="placeholder">Story imported but no outline entries found.</div>');
+        }
+        saveStoryState();
+    } else {
+        logActivity('⚠️ Imported data had no outline; keeping current story state');
+    }
+
+    const readingPosition = payload.readingPosition;
+    if (readingPosition && typeof readingPosition.chapter === 'number') {
+        saveReadingPosition(readingPosition.chapter, readingPosition.char || 0);
+    } else if (readingPosition === null) {
+        clearReadingPosition();
+    }
+
+    cleanupOpenAIAudio();
+    playingIndex = null;
+    updatePlayButtonState();
+
+    if (missingSettings && missingSettings.length) {
+        logActivity(`⚠️ Missing settings in import data: ${missingSettings.join(', ')}`);
+    }
+}
+
+function applyImportedSettings(importedSettings) {
+    if (!importedSettings || typeof importedSettings !== 'object') {
+        logActivity('⚠️ Imported data missing settings; keeping current configuration');
+        return [];
+    }
+
+    const expectedKeys = [
+        'autoplay',
+        'language',
+        'outlineSystemPrompt',
+        'chapterSystemPrompt',
+        'storyPrompt',
+        'model',
+        'openaiVoice',
+        'openaiInstructions',
+        'openaiTTSModel'
+    ];
+    const missing = expectedKeys.filter(key => !(key in importedSettings));
+
+    if ('autoplay' in importedSettings && autoplayCheckbox) {
+        autoplayCheckbox.checked = !!importedSettings.autoplay;
+    }
+    if ('language' in importedSettings && languageSelect) {
+        applySelectValueWithWarning(languageSelect, importedSettings.language, 'language');
+    }
+    if ('outlineSystemPrompt' in importedSettings && outlineSystemPromptInput) {
+        outlineSystemPromptInput.value = importedSettings.outlineSystemPrompt || '';
+    }
+    if ('chapterSystemPrompt' in importedSettings && chapterSystemPromptInput) {
+        chapterSystemPromptInput.value = importedSettings.chapterSystemPrompt || '';
+    }
+    if ('storyPrompt' in importedSettings && storyPromptInput) {
+        storyPromptInput.value = importedSettings.storyPrompt || '';
+        try {
+            localStorage.setItem(STORY_PROMPT_STORAGE, storyPromptInput.value || '');
+        } catch (e) {
+        }
+    }
+    if ('model' in importedSettings && modelSelect) {
+        applySelectValueWithWarning(modelSelect, importedSettings.model, 'model');
+        try {
+            localStorage.setItem(MODEL_STORAGE, modelSelect.value || '');
+        } catch (e) {
+        }
+    }
+    if ('openaiVoice' in importedSettings && openaiVoiceSelect) {
+        applySelectValueWithWarning(openaiVoiceSelect, importedSettings.openaiVoice, 'voice');
+        try {
+            localStorage.setItem(OPENAI_VOICE_STORAGE, openaiVoiceSelect.value || '');
+        } catch (e) {
+        }
+    }
+    if ('openaiInstructions' in importedSettings && openaiInstructionsSelect) {
+        applySelectValueWithWarning(openaiInstructionsSelect, importedSettings.openaiInstructions, 'voice instructions');
+        try {
+            localStorage.setItem(OPENAI_INSTRUCTIONS_STORAGE, openaiInstructionsSelect.value || '');
+        } catch (e) {
+        }
+    }
+    if ('openaiTTSModel' in importedSettings && openaiTTSModelSelect) {
+        applySelectValueWithWarning(openaiTTSModelSelect, importedSettings.openaiTTSModel, 'TTS model');
+        try {
+            localStorage.setItem(OPENAI_TTS_MODEL_STORAGE, openaiTTSModelSelect.value || '');
+        } catch (e) {
+        }
+    }
+
+    saveSettings();
+
+    return missing;
+}
+
+function applySelectValueWithWarning(selectEl, value, label) {
+    if (!selectEl) return;
+    const targetValue = value === undefined || value === null ? '' : value;
+    const exists = Array.from(selectEl.options).some(opt => opt.value === targetValue);
+    if (!exists) {
+        logActivity(`⚠️ Imported ${label} "${targetValue}" is not available; keeping current selection`);
+        return;
+    }
+    selectEl.value = targetValue;
+}
 
 function speakChapter(idx, startChar = 0) {
     return speakChapterWithOpenAI(idx, startChar);
