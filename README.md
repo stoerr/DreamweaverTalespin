@@ -86,7 +86,7 @@ visible immediately.
 - If the editor prompts for a file that doesn't exist (e.g. `server.js`), note that the correct development server file
   is `dev-server.js` in the repository root.
 - If playback fails, double-check that your OpenAI API key is valid and that you've selected a supported OpenAI TTS
-  model (default `tts-1-hd`).
+  model (default `tts-1-hd`; `tts-1` also supported as standard quality).
 
 ## License
 

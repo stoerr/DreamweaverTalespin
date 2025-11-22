@@ -306,7 +306,8 @@ function persistVoiceInstructions() {
 function updateVoiceInstructionsUI() {
     if (!openaiInstructionsGroup) return;
     const model = openaiTTSModelSelect ? openaiTTSModelSelect.value : 'tts-1-hd';
-    if (model === 'tts-1-hd') {
+    // Hide instructions for baseline TTS models (tts-1-hd and tts-1)
+    if (model === 'tts-1-hd' || model === 'tts-1') {
         openaiInstructionsGroup.classList.add('d-none');
     } else {
         openaiInstructionsGroup.classList.remove('d-none');
@@ -344,8 +345,8 @@ function resetChapterAudioDownload() {
             URL.revokeObjectURL(downloadableChapterUrl);
         } catch (e) {
         }
-        downloadableChapterUrl = null;
     }
+    downloadableChapterUrl = null;
     downloadableChapterFilename = null;
     if (downloadChapterBtn) {
         downloadChapterBtn.classList.add('d-none');
@@ -1687,7 +1688,7 @@ async function speakChapterWithOpenAI(idx, startChar = 0) {
 
     const voice = (openaiVoiceSelect && openaiVoiceSelect.value) || 'alloy';
     const instructions = getCurrentVoiceInstructions();
-    const ttsModel = (openaiTTSModelSelect && openaiTTSModelSelect.value) || 'tts-1-hd';
+    const ttsModel = (openaiTTSModelSelect && openaiTTSModelSelect.value) || 'tts-1-hd'; // allow tts-1 selection equally
 
     try {
         const startParagraphIdx = findParagraphIndexByChar(paragraphs, normalizedStart);
@@ -1858,7 +1859,7 @@ async function playOpenAIChunks(chapterIdx, chunks, voice, instructions, model, 
 async function fetchOpenAITTS(text, voice, instructions, model, apiKey) {
     // Call OpenAI TTS endpoint - return ArrayBuffer of audio (MP3)
     const payload = {
-        model: model || 'tts-1-hd',
+        model: model || 'tts-1-hd', // if user selects tts-1 it will be passed through unchanged
         voice: voice,
         input: text
     };
