@@ -868,6 +868,11 @@ function buildIndexHtml(slug, config, outline, hasCover) {
 
     var storyIdea = xmlEscape(config.storyIdea || '');
     var language = xmlEscape(config.language || '');
+    var hasOutline = !!outline;
+    var outlineBtn = '';
+    if (!hasOutline) {
+        outlineBtn = '<button id="generate-btn" class="btn btn-primary btn-sm">Generate outline</button>';
+    }
 
     var coverHtml = '';
     if (hasCover) {
@@ -897,7 +902,8 @@ function buildIndexHtml(slug, config, outline, hasCover) {
         '</div>' +
         '<div class="card card-soft p-4 mb-4" style="background-color:#f6ffed;">' +
         '<div class="d-flex justify-content-between align-items-center mb-3"><h3 class="h5 mb-0">Outline</h3>' +
-        '<button id="generate-btn" class="btn btn-primary btn-sm">Generate outline</button></div>' +
+        outlineBtn +
+        '</div>' +
         '<div id="status" class="text-muted small mb-3"></div>' +
         outlineMeta +
         charactersHtml +
@@ -913,7 +919,7 @@ function buildIndexHtml(slug, config, outline, hasCover) {
         'var statusEl=document.getElementById("status");' +
         'function setStatus(msg,cls){statusEl.textContent=msg;statusEl.className="mb-3 "+(cls||"text-muted small");}' +
         'function poll(){setStatus("Generating outline...","text-info");fetch("/stories/"+slug+"/outline.json").then(function(r){if(r.status===200){r.json().then(function(){location.reload();});return;}if(r.status===202){setTimeout(poll,1500);return;}setStatus("Failed: "+r.status+" "+r.statusText,"text-danger");}).catch(function(e){setStatus("Error: "+e.message,"text-danger");});}' +
-        'btn.addEventListener("click",function(){poll();});' +
+        'if(btn){btn.addEventListener("click",function(){poll();});}' +
         '})();' +
         '</script>' +
         '</body></html>';

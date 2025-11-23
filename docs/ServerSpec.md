@@ -270,3 +270,5 @@ Further ideas to be done:
 - generate cover art based on story idea using gpt-image-1 and include as cover.jpg and display it on the story index page.
 - Add MP3 metadata tags (ID3) with chapter title, book title, author, and cover art (if available) with id3v2.
 - Later perhaps: UI to create story config files
+
+- The generate outline button should only be visible if the outline does not yet exist.
