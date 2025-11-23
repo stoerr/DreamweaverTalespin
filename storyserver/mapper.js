@@ -36,6 +36,12 @@ async function handleRequest(req, res, serverConfig) {
 
     const parsed = new URL(req.url, 'http://localhost');
     const pathname = parsed.pathname || '/';
+    if (pathname === '/') {
+        res.statusCode = 302;
+        res.setHeader('Location', '/storyindex.html');
+        res.end();
+        return;
+    }
     if (pathname === '/storyindex.html' || pathname === '/storyindex') {
         if (method !== 'GET') {
             res.statusCode = 405;
