@@ -13,12 +13,12 @@ A single-page client-side application that uses OpenAI's Chat Completions API to
 and uses the browser's Web Speech API to read chapters aloud.
 
 This repository is intentionally serverless for the application itself — the small Node.js script included is only a
-static file development server that serves the files from the `serverless/` folder with no-cache headers so you can iterate
+static file development server that serves the files from the `docs/` folder with no-cache headers so you can iterate
 quickly in the browser.
 
 ## Features
 
-- Clean, modern user interface (Bootstrap) served from `serverless/`
+- Clean, modern user interface (Bootstrap) served from `docs/`
 - Generate an outline from a short story idea, then expand each outline item into a full chapter
 - Play chapters using the browser `SpeechSynthesis` voices; the UI highlights chapters while they are being read
 - Autoplay next chapter while the following one is generated in the background (can be toggled)
@@ -28,14 +28,14 @@ quickly in the browser.
 
 ## Files
 
-- `serverless/index.html` - Main HTML UI
-- `serverless/style.css` - Styling
-- `serverless/app.js` - Main JavaScript (outline + chapter generation, TTS, voice/language handling, localStorage, OpenAI
+- `docs/index.html` - Main HTML UI
+- `docs/style.css` - Styling
+- `docs/app.js` - Main JavaScript (outline + chapter generation, TTS, voice/language handling, localStorage, OpenAI
   calls)
 - `dev-server.js` - Development server with no-cache headers
-- `serverless/prompts/outline.md` and `serverless/prompts/chapter.md` - Default system prompts that `serverless/app.js` will load on
+- `docs/prompts/outline.md` and `docs/prompts/chapter.md` - Default system prompts that `docs/app.js` will load on
   startup
-- `serverless/prompts/storyprompt-examples.json` - Optional JSON array of example story prompts used to populate the Examples
+- `docs/prompts/storyprompt-examples.json` - Optional JSON array of example story prompts used to populate the Examples
   dropdown in the UI
 
 ## Development Server
@@ -60,7 +60,7 @@ Open your browser at:
 http://localhost:3001/
 ```
 
-The server serves files from the `serverless/` directory and sets HTTP headers to prevent browser caching so changes are
+The server serves files from the `docs/` directory and sets HTTP headers to prevent browser caching so changes are
 visible immediately.
 
 ## Usage

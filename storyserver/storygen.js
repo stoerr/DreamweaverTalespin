@@ -14,7 +14,7 @@ const OUTLINE_PROMPT_FALLBACK = 'You are an assistant that creates a story outli
 const CHAPTER_PROMPT_FALLBACK = 'You are an assistant that expands a chapter description into a full chapter. Keep it vivid and engaging.\n\nExpand the provided chapter title and short description into a coherent chapter of several paragraphs, with sensory\ndetails, character actions, and dialogue where appropriate. Keep the tone consistent with the story idea and avoid\nintroducing unrelated subplots. Just output the text of the chapter.\n\nYou will specialize in creating and narrating good night stories in the style of the users favorite authors in immersive\nnarration style. If the user doesn\'t specify an author, it should use Terry Pratchett, Douglas Adams, William Gibson, T.\nKingfisher, Stanislaw Lem, Jasper Fforde.\n\nEach part of the story should be rich with detailed backstories, vivid descriptions, engaging dialogues, and detailed\ncharacter interactions. Focus on creating immersive scenes that bring the narrative to life. Dive deep into the\nthoughts, emotions, and conversations of the characters, providing a window into their experiences. Set each scene with\nprecise environmental details, making the reader feel present in the moment. The story should unfold through a series of\nwell-developed episodes, each filled with its own mini-narrative that contributes to the overall journey. Tell the plot\nstep by step as it unfolds for the main characters.';
 
 function loadPrompt(filename, fallbackText) {
-    const p = path.resolve(__dirname, '..', 'serverless', 'prompts', filename);
+    const p = path.resolve(__dirname, '..', 'docs', 'prompts', filename);
     try {
         return fs.readFileSync(p, 'utf8');
     } catch (e) {
