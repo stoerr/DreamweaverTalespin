@@ -4,7 +4,7 @@ const {callChatCompletions, textToSpeech} = require('./openai');
 
 const DEFAULT_CHAT_MODEL = 'gpt-5.1';
 const DEFAULT_TEMPERATURE = 1;
-const DEFAULT_TTS_MODEL = 'tts-1-hd';
+const DEFAULT_TTS_MODEL = 'tts-1';
 const DEFAULT_VOICE = 'alloy';
 const STORIES_DIR = path.resolve(process.cwd(), 'stories');
 
