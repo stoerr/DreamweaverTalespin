@@ -1,11 +1,22 @@
 Story FS Server Specification
 
-This specification complements Algorithm.md and defines how the HTTP server maps requests to lazily generated filesystem
-resources.
+This specification complements the [Algorithm](Algorithm.md) and defines a HTTP server that creates stories
+in the specified way from a basic story configuration describing the story idea.
+The server maps requests to lazily generated filesystem
+resources so that the story parts are generated on demand.
 
 The server code is in directory [storyserver](../storyserver), done with Node.js version 12 without any external
 dependencies and will be run on a small Linux box. For testing it can be run within a test setup in
-[testserver/](../testserver).
+[testserver/](../testserver). Files there:
+
+- server.js is the actual HTTP server.
+- mapper.js implements the lazy generation logic per this specification, defining the mapping of paths to files and
+  calling the appropriate generation functions from storygen.js.
+- storygen.js implements the actual story generation logic per Algorithm.md.
+- openai.js implements the OpenAI API calls.
+
+The OpenAI API key is provided via the environment variable OPENAI_API_KEY. There is a server.conf in the directory
+the server is started in that defines port and the OpenAI models to use.
 
 ⸻
 

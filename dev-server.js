@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const PORT = 3001;
-const baseDir = path.join(__dirname, 'docs');
+const baseDir = path.join(__dirname, 'serverless');
 
 const mimeTypes = {
     '.html': 'text/html',
