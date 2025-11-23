@@ -38,6 +38,7 @@ Required files and directories:
 • stories/<slug>/outline.json
 • stories/<slug>/chapters/NNN.md (chapter N, zero-padded)
 • stories/<slug>/audio/NNN.mp3
+• stories/<slug>/audio/<slug>.m3u (playlist with relative links to all mp3 files)
 • stories/<slug>/feed.rss
 
 <slug> is a short, URL-safe identifier, derived from the title when the story is created and kept stable.
@@ -115,6 +116,14 @@ Responses:
 • 200 OK + text/html body: page that fetches and renders the Markdown via a CDN markdown renderer (e.g., marked), styled with Bootstrap.
 • 202 Accepted is never returned directly; polling happens client-side when the backing .md returns 202.
 • Page shows navigation links to previous/next chapter when known (from outline.json) and back to /stories/<slug>/index.html.
+
+2.6 Audio playlist
+• GET /stories/<slug>/audio/<slug>.m3u
+
+Responses:
+• 200 OK + audio/x-mpegurl: M3U playlist with relative entries for every chapter mp3 (e.g., 001.mp3). Includes #EXTM3U and #EXTINF lines with chapter titles when available.
+• 202 Accepted if outline generation is in progress.
+• 404 Not Found if <slug> or config.json missing.
 
 ⸻
 
@@ -224,3 +233,13 @@ Short summary
 • Outline, chapters (.md), audio (.mp3), and RSS are lazily materialized, never regenerated.
 • HTTP endpoints return 200 with content when ready, 202 with a JSON “generating” status while a lock is held, and
 404/409 for missing or invalid resources.
+
+⸻
+
+Further ideas to be done:
+
+- serve an m3u file with relative links to all chapter mp3 files for easy playlist import into media players.
+- serve a zip of all mp3 files for easy download of the whole story.
+- Add MP3 metadata tags (ID3) with chapter title, book title, author
+- Later perhaps: UI to create story config files
+- Later perhaps: generate cover art via DALL·E based on story idea and include as cover.jpg

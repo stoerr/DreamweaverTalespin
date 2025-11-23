@@ -96,7 +96,8 @@ function pathForStory(baseDir, slug) {
         audioFile: function (index) {
             const name = String(index).padStart(3, '0') + '.mp3';
             return path.join(audioDir, name);
-        }
+        },
+        playlistFile: path.join(audioDir, slug + '.m3u')
     };
 }
 
@@ -161,6 +162,14 @@ function buildHtmlResponse(text) {
     return {
         statusCode: 200,
         headers: {'Content-Type': 'text/html; charset=utf-8'},
+        body: text
+    };
+}
+
+function buildPlaylistResponse(text) {
+    return {
+        statusCode: 200,
+        headers: {'Content-Type': 'audio/x-mpegurl'},
         body: text
     };
 }
@@ -484,6 +493,40 @@ async function ensureFeed(slug, paths, outline) {
     }
 }
 
+async function ensurePlaylist(slug, paths, outline) {
+    const file = paths.playlistFile;
+    const exists = await fileExists(file);
+    if (exists) {
+        const text = await fs.promises.readFile(file, 'utf8');
+        return {status: 'ready', text: text};
+    }
+
+    const key = 'playlist:' + slug;
+    const locked = acquireLock(key);
+    if (!locked) return {status: 'pending'};
+
+    try {
+        await ensureDir(paths.audioDir);
+        const lines = ['#EXTM3U'];
+        if (outline && outline.chapters) {
+            for (var i = 0; i < outline.chapters.length; i++) {
+                var idx = i + 1;
+                var chapter = outline.chapters[i];
+                var title = chapter.chaptertitle || chapter.title || ('Chapter ' + idx);
+                lines.push('#EXTINF:-1,' + title);
+                lines.push(String(idx).padStart(3, '0') + '.mp3');
+            }
+        }
+        const text = lines.join('\n') + '\n';
+        await writeFileAtomic(file, text, 'utf8');
+        return {status: 'ready', text: text};
+    } catch (e) {
+        throw e;
+    } finally {
+        releaseLock(key);
+    }
+}
+
 function backgroundGenerateChapter(index, slug, paths, outline, storyConfig) {
     if (!outline || !outline.chapters || index > outline.chapters.length) return;
     setImmediate(function () {
@@ -588,6 +631,23 @@ async function serveFeed(slug, serverConfig) {
     return buildFeedResponse(feedStatus.text);
 }
 
+async function servePlaylist(slug, serverConfig) {
+    const baseDir = serverConfig.storiesDir || STORIES_DIR;
+    const paths = pathForStory(baseDir, slug);
+    const storyConfRaw = await loadStoryConfig(paths);
+    if (!storyConfRaw) return buildMissing();
+    const storyConfig = normalizeStoryConfig(storyConfRaw, serverConfig);
+    storyConfig.slug = slug;
+    storyConfig.storiesDir = baseDir;
+
+    const outlineResult = await ensureOutline(slug, paths, storyConfig);
+    if (outlineResult.status === 'pending') return buildGenerating('outline');
+    const outline = outlineResult.outline;
+    const playlistStatus = await ensurePlaylist(slug, paths, outline);
+    if (playlistStatus.status === 'pending') return buildGenerating('playlist');
+    return buildPlaylistResponse(playlistStatus.text);
+}
+
 function buildIndexHtml(slug, config, outline) {
     var safeSlug = xmlEscape(slug);
     var chapterSection = '';
@@ -655,6 +715,7 @@ function buildIndexHtml(slug, config, outline) {
         '<div class="d-flex gap-2 flex-wrap">' +
         '<a class="btn btn-pastel" href="/stories/' + safeSlug + '/outline.json">Outline JSON</a>' +
         '<a class="btn btn-pastel" href="/stories/' + safeSlug + '/feed.rss">Feed</a>' +
+        '<a class="btn btn-pastel" href="/stories/' + safeSlug + '/audio/' + safeSlug + '.m3u">Playlist (m3u)</a>' +
         '</div>' +
         '</div>' +
         '</div>' +
@@ -826,6 +887,7 @@ module.exports = {
     serveChapterMarkdown,
     serveChapterAudio,
     serveFeed,
+    servePlaylist,
     serveStoryIndex,
     serveChapterHtml,
     serveStoryList,

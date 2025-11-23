@@ -11,3 +11,4 @@ stories/*/chapters/*.tmp
 # Audio outputs and locks
 stories/*/audio/*.mp3
 stories/*/audio/*.tmp
+stories/*/audio/*.m3u
