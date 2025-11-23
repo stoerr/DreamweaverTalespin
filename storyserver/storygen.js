@@ -177,6 +177,14 @@ function buildFeedResponse(text) {
     };
 }
 
+function buildHtmlResponse(text) {
+    return {
+        statusCode: 200,
+        headers: {'Content-Type': 'text/html; charset=utf-8'},
+        body: text
+    };
+}
+
 function buildGenerating(resource, chapter) {
     const status = {status: 'generating', resource: resource};
     if (chapter) status.chapter = chapter;
@@ -566,10 +574,171 @@ async function serveFeed(slug, serverConfig) {
     return buildFeedResponse(feedStatus.text);
 }
 
+function buildIndexHtml(slug, config, outline) {
+    var safeSlug = xmlEscape(slug);
+    var chapterSection = '';
+    if (outline && outline.chapters && outline.chapters.length) {
+        var items = '';
+        for (var i = 0; i < outline.chapters.length; i++) {
+            var idx = i + 1;
+            var chapter = outline.chapters[i];
+            var title = chapter.chaptertitle || chapter.title || ('Chapter ' + idx);
+            var desc = chapter.chaptershortdescription || chapter.chapterdetails || '';
+            var mdLink = '/stories/' + slug + '/chapters/' + idx + '.md';
+            var htmlLink = '/stories/' + slug + '/chapters/' + idx + '.html';
+            var audioLink = '/stories/' + slug + '/chapters/' + idx + '.mp3';
+            items += '<div class="p-3 mb-3 rounded shadow-sm" style="background-color:#f5f7fb;">' +
+                '<div class="d-flex justify-content-between align-items-center mb-2">' +
+                '<div><span class="badge bg-info text-dark me-2">Chapter ' + idx + '</span><strong>' + xmlEscape(title) + '</strong></div>' +
+                '<div class="small text-muted">' + xmlEscape(desc) + '</div>' +
+                '</div>' +
+                '<div class="d-flex gap-2 flex-wrap">' +
+                '<a class="btn btn-sm btn-outline-primary" href="' + xmlEscape(mdLink) + '">Markdown</a>' +
+                '<a class="btn btn-sm btn-outline-success" href="' + xmlEscape(htmlLink) + '">Read as HTML</a>' +
+                '<a class="btn btn-sm btn-outline-secondary" href="' + xmlEscape(audioLink) + '">Audio (mp3)</a>' +
+                '</div>' +
+                '</div>';
+        }
+        chapterSection = '<h3 class="mb-3">Chapters</h3>' + items;
+    } else {
+        chapterSection = '<div class="alert alert-warning">Outline not generated yet. Use the button below to start.</div>';
+    }
+
+    var outlineMeta = '';
+    if (outline) {
+        outlineMeta =
+            '<div class="mb-3"><strong>Title:</strong> ' + xmlEscape(outline.title || config.title || '') + '</div>' +
+            '<div class="mb-3"><strong>Subtitle:</strong> ' + xmlEscape(outline.subtitle || '') + '</div>' +
+            '<div class="mb-3"><strong>Description:</strong><br>' + xmlEscape(outline.description || '') + '</div>';
+    }
+
+    var charactersHtml = '';
+    if (outline && outline.characters && outline.characters.length) {
+        var chars = '';
+        for (var c = 0; c < outline.characters.length; c++) {
+            var ch = outline.characters[c];
+            chars += '<div class="p-2 mb-2 rounded" style="background-color:#f1f8ff;">' +
+                '<strong>' + xmlEscape(ch.name) + ':</strong> ' + xmlEscape(ch.description) + '</div>';
+        }
+        charactersHtml = '<h4>Characters</h4>' + chars;
+    }
+
+    var storyIdea = xmlEscape(config.storyIdea || '');
+    var language = xmlEscape(config.language || '');
+
+    return '<!doctype html><html lang="en"><head>' +
+        '<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">' +
+        '<title>Story: ' + xmlEscape(config.title || slug) + '</title>' +
+        '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">' +
+        '<style>body{background:linear-gradient(135deg,#fdfbfb 0%,#ebedee 100%);} .card-soft{border:0;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,0.08);} .btn-pastel{background-color:#dbeafe;color:#1e3a8a;border:0;} .btn-pastel:hover{background-color:#bfdbfe;color:#1e3a8a;} </style>' +
+        '</head><body>' +
+        '<div class="container py-4">' +
+        '<div class="card card-soft p-4 mb-4" style="background-color:#fffaf5;">' +
+        '<div class="d-flex justify-content-between align-items-start flex-wrap">' +
+        '<div><h1 class="h3 mb-3">' + xmlEscape(config.title || 'Story') + '</h1>' +
+        '<p class="text-muted mb-1"><strong>Language:</strong> ' + language + '</p>' +
+        '<p class="text-muted"><strong>Story idea:</strong> ' + storyIdea + '</p></div>' +
+        '<div class="d-flex gap-2 flex-wrap">' +
+        '<a class="btn btn-pastel" href="/stories/' + safeSlug + '/outline.json">Outline JSON</a>' +
+        '<a class="btn btn-pastel" href="/stories/' + safeSlug + '/feed.rss">Feed</a>' +
+        '</div>' +
+        '</div>' +
+        '</div>' +
+        '<div class="card card-soft p-4 mb-4" style="background-color:#f6ffed;">' +
+        '<div class="d-flex justify-content-between align-items-center mb-3"><h3 class="h5 mb-0">Outline</h3>' +
+        '<button id="generate-btn" class="btn btn-primary btn-sm">Generate outline</button></div>' +
+        '<div id="status" class="text-muted small mb-3"></div>' +
+        outlineMeta +
+        charactersHtml +
+        '</div>' +
+        '<div class="card card-soft p-4" style="background-color:#fff;">' +
+        chapterSection +
+        '</div>' +
+        '</div>' +
+        '<script>' +
+        '(function(){' +
+        'var slug="' + safeSlug + '";' +
+        'var btn=document.getElementById("generate-btn");' +
+        'var statusEl=document.getElementById("status");' +
+        'function setStatus(msg,cls){statusEl.textContent=msg;statusEl.className="mb-3 "+(cls||"text-muted small");}' +
+        'function poll(){setStatus("Generating outline...","text-info");fetch("/stories/"+slug+"/outline.json").then(function(r){if(r.status===200){r.json().then(function(){location.reload();});return;}if(r.status===202){setTimeout(poll,1500);return;}setStatus("Failed: "+r.status+" "+r.statusText,"text-danger");}).catch(function(e){setStatus("Error: "+e.message,"text-danger");});}' +
+        'btn.addEventListener("click",function(){poll();});' +
+        '})();' +
+        '</script>' +
+        '</body></html>';
+}
+
+function buildChapterHtml(slug, chapterIndex) {
+    var safeSlug = xmlEscape(slug);
+    var idx = chapterIndex;
+    var prev = idx > 1 ? '<a class="btn btn-outline-primary me-2" href="/stories/' + safeSlug + '/chapters/' + (idx - 1) + '.html">&laquo; Previous</a>' : '';
+    var next = '<a class="btn btn-outline-primary" id="next-link" href="#">Next &raquo;</a>';
+
+    return '<!doctype html><html lang="en"><head>' +
+        '<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">' +
+        '<title>Chapter ' + idx + '</title>' +
+        '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">' +
+        '<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>' +
+        '<style>body{background:#f8fafc;} .card-soft{border:0;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,0.08);} .chapter-body h1{font-size:1.6rem;margin-bottom:1rem;} .chapter-body p{line-height:1.7;}</style>' +
+        '</head><body>' +
+        '<div class="container py-4">' +
+        '<div class="mb-3"><a class="btn btn-outline-secondary btn-sm" href="/stories/' + safeSlug + '/index.html">&larr; Back to story</a></div>' +
+        '<div class="card card-soft p-4" style="background-color:#fffaf5;">' +
+        '<div class="d-flex justify-content-between flex-wrap align-items-center mb-3">' +
+        '<div><div class="text-muted small">Story: ' + safeSlug + '</div><h1 class="h4 mb-0" id="chapter-title">Chapter ' + idx + '</h1></div>' +
+        '<div class="d-flex align-items-center">' + prev + next + '</div>' +
+        '</div>' +
+        '<div id="status" class="text-muted mb-2 small">Loading chapter...</div>' +
+        '<div id="chapter-content" class="chapter-body"></div>' +
+        '</div>' +
+        '</div>' +
+        '<script>' +
+        '(function(){' +
+        'var slug="' + safeSlug + '";' +
+        'var idx=' + idx + ';' +
+        'var statusEl=document.getElementById("status");' +
+        'var titleEl=document.getElementById("chapter-title");' +
+        'var contentEl=document.getElementById("chapter-content");' +
+        'var nextLink=document.getElementById("next-link");' +
+        'function setStatus(msg,cls){statusEl.textContent=msg;statusEl.className="mb-2 small "+(cls||"text-muted");}' +
+        'function loadOutline(){return fetch("/stories/"+slug+"/outline.json").then(function(r){if(r.status===200)return r.json();if(r.status===202){setStatus("Generating outline...","text-info");return new Promise(function(res){setTimeout(function(){loadOutline().then(res);},1500);});}throw new Error("Failed to load outline: "+r.status);});}' +
+        'function updateNav(outline){if(!outline||!outline.chapters)return;var total=outline.chapters.length; if(idx>=total) {nextLink.classList.add("disabled"); nextLink.href="#";} else {nextLink.classList.remove("disabled"); nextLink.href="/stories/"+slug+"/chapters/"+(idx+1)+".html";} var ch=outline.chapters[idx-1]; if(ch){titleEl.textContent="Chapter "+idx+": "+(ch.chaptertitle||ch.title||"");}}' +
+        'function loadMarkdown(){setStatus("Loading chapter markdown...","text-info");return fetch("/stories/"+slug+"/chapters/"+idx+".md").then(function(r){if(r.status===200)return r.text();if(r.status===202){setStatus("Chapter is being generated...","text-info");return new Promise(function(res){setTimeout(function(){loadMarkdown().then(res);},1500);});}throw new Error("Failed to load chapter: "+r.status);});}' +
+        'loadOutline().then(function(out){updateNav(out);}).catch(function(e){setStatus(e.message,"text-danger");});' +
+        'loadMarkdown().then(function(md){setStatus("","text-muted");contentEl.innerHTML=marked.parse(md);}).catch(function(e){setStatus(e.message,"text-danger");});' +
+        '})();' +
+        '</script>' +
+        '</body></html>';
+}
+
+async function serveStoryIndex(slug, serverConfig) {
+    const baseDir = serverConfig.storiesDir || STORIES_DIR;
+    const paths = pathForStory(baseDir, slug);
+    const storyConfRaw = await loadStoryConfig(paths);
+    if (!storyConfRaw) return buildMissing();
+    const storyConfig = normalizeStoryConfig(storyConfRaw, serverConfig);
+    const outline = await loadOutline(paths);
+    const html = buildIndexHtml(slug, storyConfig, outline);
+    return buildHtmlResponse(html);
+}
+
+async function serveChapterHtml(slug, chapterIndex, serverConfig) {
+    const baseDir = serverConfig.storiesDir || STORIES_DIR;
+    const paths = pathForStory(baseDir, slug);
+    const storyConfRaw = await loadStoryConfig(paths);
+    if (!storyConfRaw) return buildMissing();
+    const outline = await loadOutline(paths);
+    if (outline && (!outline.chapters || outline.chapters.length < chapterIndex)) return buildMissing();
+    const html = buildChapterHtml(slug, chapterIndex);
+    return buildHtmlResponse(html);
+}
+
 module.exports = {
     serveOutline,
     serveChapterMarkdown,
     serveChapterAudio,
     serveFeed,
+    serveStoryIndex,
+    serveChapterHtml,
     STORIES_DIR
 };

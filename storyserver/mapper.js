@@ -1,5 +1,5 @@
 const url = require('url');
-const {serveOutline, serveChapterMarkdown, serveChapterAudio, serveFeed} = require('./storygen');
+const {serveOutline, serveChapterMarkdown, serveChapterAudio, serveFeed, serveStoryIndex, serveChapterHtml} = require('./storygen');
 
 function sendResponse(res, result) {
     res.statusCode = result.statusCode;
@@ -23,7 +23,7 @@ async function handleRequest(req, res, serverConfig) {
     const parsed = url.parse(req.url);
     const parts = (parsed.pathname || '').split('/').filter(function (p) { return p; });
 
-    if (parts.length < 3 || parts[0] !== 'stories') {
+    if (parts.length < 2 || parts[0] !== 'stories') {
         res.statusCode = 404;
         res.setHeader('Content-Type', 'text/plain');
         res.end('Not found');
@@ -33,6 +33,18 @@ async function handleRequest(req, res, serverConfig) {
     const slug = parts[1];
 
     try {
+        if (parts.length === 2) {
+            const result = await serveStoryIndex(slug, serverConfig);
+            sendResponse(res, result);
+            return;
+        }
+
+        if (parts[2] === 'index.html' && parts.length === 3) {
+            const result = await serveStoryIndex(slug, serverConfig);
+            sendResponse(res, result);
+            return;
+        }
+
         if (parts[2] === 'outline.json' && parts.length === 3) {
             const result = await serveOutline(slug, serverConfig);
             sendResponse(res, result);
@@ -46,7 +58,7 @@ async function handleRequest(req, res, serverConfig) {
         }
 
         if (parts[2] === 'chapters' && parts.length === 4) {
-            const chapterMatch = parts[3].match(/^([0-9]+)\.(md|mp3)$/);
+            const chapterMatch = parts[3].match(/^([0-9]+)\.(md|mp3|html)$/);
             if (!chapterMatch) {
                 res.statusCode = 404;
                 res.setHeader('Content-Type', 'text/plain');
@@ -61,6 +73,11 @@ async function handleRequest(req, res, serverConfig) {
             }
             if (chapterMatch[2] === 'mp3') {
                 const result = await serveChapterAudio(slug, index, serverConfig);
+                sendResponse(res, result);
+                return;
+            }
+            if (chapterMatch[2] === 'html') {
+                const result = await serveChapterHtml(slug, index, serverConfig);
                 sendResponse(res, result);
                 return;
             }

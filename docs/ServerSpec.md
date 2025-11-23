@@ -53,6 +53,12 @@ Required files and directories:
 
 All endpoints are under /stories/<slug>/….
 
+2.0 Story landing page
+• GET /stories/<slug>/ (or /stories/<slug>/index.html)
+    • 200 OK + text/html: Generated summary page rendered with Bootstrap (via CDN) in a light pastel style.
+    • Shows config.json data, outline (if present), character list, and links to outline.json, feed.rss, and every chapter’s Markdown/HTML/audio paths (even if not yet generated).
+    • Includes a “Generate outline” button that calls /stories/<slug>/outline.json; while 202 is returned it polls, and reloads the page when the outline is ready.
+
 2.1 Outline
 • GET /stories/<slug>/outline.json
 
@@ -102,6 +108,14 @@ Responses:
 { "status": "generating", "resource": "feed" }
 
 	•	404 Not Found if <slug> or config.json missing.
+
+2.5 Chapter HTML view
+• GET /stories/<slug>/chapters/<n>.html
+
+Responses:
+• 200 OK + text/html body: page that fetches and renders the Markdown via a CDN markdown renderer (e.g., marked), styled with Bootstrap.
+• 202 Accepted is never returned directly; polling happens client-side when the backing .md returns 202.
+• Page shows navigation links to previous/next chapter when known (from outline.json) and back to /stories/<slug>/index.html.
 
 ⸻
 
