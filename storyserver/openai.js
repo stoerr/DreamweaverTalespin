@@ -106,7 +106,8 @@ async function generateImage(prompt, opts) {
         model: (opts && opts.model) || 'gpt-image-1',
         prompt: prompt,
         size: (opts && opts.size) || '1024x1024',
-        response_format: 'b64_json'
+        response_format: 'b64_json',
+        style: 'vivid'
     };
     const response = await performRequest('/v1/images/generations', body, false, null);
     const entry = response && response.data && response.data[0];

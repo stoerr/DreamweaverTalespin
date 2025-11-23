@@ -86,7 +86,7 @@ async function handleRequest(req, res, serverConfig) {
         }
 
         if (parts[2] === 'chapters' && parts.length === 4) {
-            const chapterMatch = parts[3].match(/^([0-9]+)\.(md|mp3|html)$/);
+            const chapterMatch = parts[3].match(/^0*([0-9]+)\.(md|mp3|html)$/);
             if (!chapterMatch) {
                 res.statusCode = 404;
                 res.setHeader('Content-Type', 'text/plain');

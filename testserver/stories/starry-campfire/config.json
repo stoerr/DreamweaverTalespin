@@ -1,5 +1,9 @@
 {
   "title": "Starry Campfire Tales",
   "language": "en",
-  "storyIdea": "A group of friends gather by a lakeside campfire under a sky full of shooting stars, sharing stories as the night quietly changes them."
+  "storyIdea": "A group of friends gather by a lakeside campfire under a sky full of shooting stars, sharing stories as the night quietly changes them.",
+  "model": "gpt-5.1",
+  "ttsModel": "tts-1",
+  "voice": "alloy",
+  "ttsInstructions": ""
 }

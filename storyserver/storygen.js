@@ -37,6 +37,10 @@ function logError(msg, err) {
     console.error(ts() + ' ERROR ' + msg + (err ? (' :: ' + err.message || err) : ''));
 }
 
+function sleep(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+}
+
 function getLanguageInstruction(languageCode) {
     if (!languageCode) return '';
     const map = {en: 'English', de: 'German', fr: 'French', es: 'Spanish'};
@@ -387,11 +391,12 @@ function buildFeed(slug, outline) {
     let items = '';
     for (var i = 0; i < outline.chapters.length; i++) {
         const idx = i + 1;
+        const padded = String(idx).padStart(3, '0');
         const chapter = outline.chapters[i];
         const chTitle = chapter.chaptertitle || chapter.title || ('Chapter ' + idx);
         const desc = chapter.chaptershortdescription || chapter.chapterdetails || '';
         const mdLink = '/stories/' + slug + '/chapters/' + idx + '.md';
-        const audioLink = '/stories/' + slug + '/chapters/' + idx + '.mp3';
+        const audioLink = '/stories/' + slug + '/chapters/' + padded + '.mp3';
         items += '<item>';
         items += '<title>' + xmlEscape(chTitle) + '</title>';
         items += '<description><![CDATA[' + (desc || '') + ']]></description>';
@@ -508,8 +513,16 @@ async function ensureChapter(index, slug, paths, outline, storyConfig) {
 
     await ensureDir(paths.chaptersDir);
     const key = 'chapter:' + slug + ':' + index;
-    const locked = acquireLock(key);
-    if (!locked) return {status: 'pending'};
+    let locked = acquireLock(key);
+    if (!locked) {
+        // wait for in-flight chapter generation to finish
+        while (!locked) {
+            const fileNow = await fileExists(file);
+            if (fileNow) return {status: 'ready'};
+            await sleep(200);
+            locked = acquireLock(key);
+        }
+    }
 
     try {
         logInfo('Generating chapter ' + index + ' for story ' + slug);
@@ -542,8 +555,16 @@ async function ensureAudio(index, slug, paths, storyConfig) {
 
     await ensureDir(paths.audioDir);
     const key = 'audio:' + slug + ':' + index;
-    const locked = acquireLock(key);
-    if (!locked) return {status: 'pending'};
+    let locked = acquireLock(key);
+    if (!locked) {
+        // wait for in-flight audio generation to complete
+        while (!locked) {
+            const existsNow = await fileExists(audioFile);
+            if (existsNow) return {status: 'ready', buffer: await fs.promises.readFile(audioFile)};
+            await sleep(200);
+            locked = acquireLock(key);
+        }
+    }
 
     try {
         await ensureDir(paths.audioDir);
@@ -705,11 +726,17 @@ async function serveChapterAudio(slug, chapterIndex, serverConfig) {
     const outline = outlineResult.outline;
     if (!outline.chapters || outline.chapters.length < chapterIndex) return buildMissing();
 
-    const chaptersStatus = await ensureChaptersThrough(chapterIndex, slug, paths, outline, storyConfig);
-    if (chaptersStatus.status === 'pending') return buildGenerating('chapter', chapterIndex);
+    let chaptersStatus = await ensureChaptersThrough(chapterIndex, slug, paths, outline, storyConfig);
+    while (chaptersStatus.status === 'pending') {
+        await sleep(200);
+        chaptersStatus = await ensureChaptersThrough(chapterIndex, slug, paths, outline, storyConfig);
+    }
 
-    const audioStatus = await ensureAudio(chapterIndex, slug, paths, storyConfig);
-    if (audioStatus.status === 'pending') return buildGenerating('audio', chapterIndex);
+    let audioStatus = await ensureAudio(chapterIndex, slug, paths, storyConfig);
+    while (audioStatus.status === 'pending') {
+        await sleep(200);
+        audioStatus = await ensureAudio(chapterIndex, slug, paths, storyConfig);
+    }
     if (chapterIndex < outline.chapters.length) {
         backgroundGenerateAudio(chapterIndex + 1, slug, paths, outline, storyConfig);
     }
@@ -869,11 +896,12 @@ function buildIndexHtml(slug, config, outline, hasCover) {
         for (var i = 0; i < outline.chapters.length; i++) {
             var idx = i + 1;
             var chapter = outline.chapters[i];
+            var padded = String(idx).padStart(3, '0');
             var title = chapter.chaptertitle || chapter.title || ('Chapter ' + idx);
             var desc = chapter.chaptershortdescription || chapter.chapterdetails || '';
             var mdLink = '/stories/' + slug + '/chapters/' + idx + '.md';
             var htmlLink = '/stories/' + slug + '/chapters/' + idx + '.html';
-            var audioLink = '/stories/' + slug + '/chapters/' + idx + '.mp3';
+            var audioLink = '/stories/' + slug + '/chapters/' + padded + '.mp3';
             items += '<div class="p-3 mb-3 rounded shadow-sm" style="background-color:#f5f7fb;">' +
                 '<div class="d-flex justify-content-between align-items-center mb-2">' +
                 '<div><span class="badge bg-info text-dark me-2">Chapter ' + idx + '</span><strong>' + xmlEscape(title) + '</strong></div>' +

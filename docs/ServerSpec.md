@@ -33,7 +33,8 @@ Required files and directories:
 • title (string)
 • language (code, e.g. "en")
 • storyIdea (string)
-•    (Optional) model / temperature settings
+•    (Optional) model / temperature settings for text generation
+•    (Optional) ttsModel / voice / ttsInstructions settings for audio generation
 • Lazily created, never regenerated:
 • stories/<slug>/outline.json
 • stories/<slug>/chapters/NNN.md (chapter N, zero-padded)
