@@ -1,5 +1,5 @@
 const url = require('url');
-const {serveOutline, serveChapterMarkdown, serveChapterAudio, serveFeed, serveStoryIndex, serveChapterHtml, serveStoryList, servePlaylist} = require('./storygen');
+const {serveOutline, serveChapterMarkdown, serveChapterAudio, serveFeed, serveStoryIndex, serveChapterHtml, serveStoryList, servePlaylist, serveZip, serveCoverImage} = require('./storygen');
 
 function sendResponse(res, result) {
     res.statusCode = result.statusCode;
@@ -72,6 +72,16 @@ async function handleRequest(req, res, serverConfig) {
 
         if (parts[2] === 'audio' && parts.length === 4 && parts[3] === slug + '.m3u') {
             const result = await servePlaylist(slug, serverConfig);
+            sendResponse(res, result);
+            return;
+        }
+        if (parts[2] === 'audio' && parts.length === 4 && parts[3] === slug + '.zip') {
+            const result = await serveZip(slug, serverConfig);
+            sendResponse(res, result);
+            return;
+        }
+        if (parts[2] === 'cover.jpg' && parts.length === 3) {
+            const result = await serveCoverImage(slug, serverConfig);
             sendResponse(res, result);
             return;
         }

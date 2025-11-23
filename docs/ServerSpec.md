@@ -39,7 +39,9 @@ Required files and directories:
 • stories/<slug>/chapters/NNN.md (chapter N, zero-padded)
 • stories/<slug>/audio/NNN.mp3
 • stories/<slug>/audio/<slug>.m3u (playlist with relative links to all mp3 files)
+• stories/<slug>/audio/<slug>.zip (zip with all mp3s, generated via external zip)
 • stories/<slug>/feed.rss
+• stories/<slug>/cover.jpg (generated cover art from story idea)
 
 <slug> is a short, URL-safe identifier, derived from the title when the story is created and kept stable.
 
@@ -125,6 +127,22 @@ Responses:
 • 202 Accepted if outline generation is in progress.
 • 404 Not Found if <slug> or config.json missing.
 
+2.7 Audio archive
+• GET /stories/<slug>/audio/<slug>.zip
+
+Responses:
+• 200 OK + application/zip: zip containing all chapter mp3 files (names as 001.mp3, 002.mp3, …).
+• 202 Accepted if outline generation or audio generation is in progress.
+• 404 Not Found if <slug> or config.json missing.
+
+2.8 Cover image
+• GET /stories/<slug>/cover.jpg
+
+Responses:
+• 200 OK + image/jpeg: generated cover art based on the story idea (model gpt-image-1).
+• 202 Accepted if generation is in progress.
+• 404 Not Found if <slug> or config.json missing.
+
 ⸻
 
 3. Lazy generation rules
@@ -178,11 +196,19 @@ On GET /chapters/<n>.mp3:
    • If lock exists: return 202.
    • If acquired:
        • Read chapters/NNN.md.
-       • Run TTS to produce MP3.
+       • Chunk text for TTS to <=4000 characters per request, preferring paragraph boundaries (falling back to sentences).
+       • Run TTS to produce MP3 for each chunk and concatenate.
+       • Add ID3 metadata (title, album/book title, author when available) and embed cover art if present.
        • Write audio/NNN.tmp, then rename to audio/NNN.mp3.
        • Release the in-memory lock.
 4. Return 200 with audio/NNN.mp3.
 5. Optimization: after serving audio for chapter n, the server may start generating audio for chapter n+1 in the background (after ensuring chapter n+1 exists).
+
+Zip archive
+• When /stories/<slug>/audio/<slug>.zip is requested, the server ensures outline, all chapters, and all mp3 files exist, then runs the system “zip” command to package the mp3s (no regeneration if the zip already exists).
+
+Cover art
+• Generated once per story (cover.jpg) using model gpt-image-1 and the story idea as prompt; reused in the story index, MP3 metadata, and available via /stories/<slug>/cover.jpg.
 
 3.4 RSS (feed.rss)
 
@@ -238,8 +264,9 @@ Short summary
 
 Further ideas to be done:
 
-- serve an m3u file with relative links to all chapter mp3 files for easy playlist import into media players.
-- serve a zip of all mp3 files for easy download of the whole story.
-- Add MP3 metadata tags (ID3) with chapter title, book title, author
+- fix mp3 generation: the prompt can only be up to 4000 characters. Split on paragraph boundaries to not cut sentences.
+- serve a zip of all mp3 files for easy download of the whole story using the external zip program. Before that generate
+  all mp3 files if not yet done.
+- generate cover art based on story idea using gpt-image-1 and include as cover.jpg and display it on the story index page.
+- Add MP3 metadata tags (ID3) with chapter title, book title, author, and cover art (if available) with id3v2.
 - Later perhaps: UI to create story config files
-- Later perhaps: generate cover art via DALL·E based on story idea and include as cover.jpg

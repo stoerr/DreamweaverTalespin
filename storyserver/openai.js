@@ -101,7 +101,21 @@ async function textToSpeech(text, opts) {
     return buffer;
 }
 
+async function generateImage(prompt, opts) {
+    const body = {
+        model: (opts && opts.model) || 'gpt-image-1',
+        prompt: prompt,
+        size: (opts && opts.size) || '1024x1024',
+        response_format: 'b64_json'
+    };
+    const response = await performRequest('/v1/images/generations', body, false, null);
+    const b64 = response && response.data && response.data[0] && response.data[0].b64_json;
+    if (!b64) throw new Error('Invalid response from OpenAI image generation');
+    return Buffer.from(b64, 'base64');
+}
+
 module.exports = {
     callChatCompletions,
-    textToSpeech
+    textToSpeech,
+    generateImage
 };

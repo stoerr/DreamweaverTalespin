@@ -12,3 +12,5 @@ stories/*/chapters/*.tmp
 stories/*/audio/*.mp3
 stories/*/audio/*.tmp
 stories/*/audio/*.m3u
+stories/*/audio/*.zip
+stories/*/cover.jpg

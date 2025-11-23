@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-const {callChatCompletions, textToSpeech} = require('./openai');
+const {callChatCompletions, textToSpeech, generateImage} = require('./openai');
+const {spawn} = require('child_process');
 
 const DEFAULT_CHAT_MODEL = 'gpt-5.1';
 const DEFAULT_TEMPERATURE = 1;
@@ -87,6 +88,7 @@ function pathForStory(baseDir, slug) {
         config: path.join(storyDir, 'config.json'),
         outline: path.join(storyDir, 'outline.json'),
         feed: path.join(storyDir, 'feed.rss'),
+        cover: path.join(storyDir, 'cover.jpg'),
         chaptersDir: chaptersDir,
         audioDir: audioDir,
         chapterFile: function (index) {
@@ -97,6 +99,7 @@ function pathForStory(baseDir, slug) {
             const name = String(index).padStart(3, '0') + '.mp3';
             return path.join(audioDir, name);
         },
+        zipFile: path.join(audioDir, slug + '.zip'),
         playlistFile: path.join(audioDir, slug + '.m3u')
     };
 }
@@ -150,6 +153,14 @@ function buildAudioResponse(buffer) {
     };
 }
 
+function buildZipResponse(buffer) {
+    return {
+        statusCode: 200,
+        headers: {'Content-Type': 'application/zip'},
+        body: buffer
+    };
+}
+
 function buildFeedResponse(text) {
     return {
         statusCode: 200,
@@ -163,6 +174,14 @@ function buildHtmlResponse(text) {
         statusCode: 200,
         headers: {'Content-Type': 'text/html; charset=utf-8'},
         body: text
+    };
+}
+
+function buildImageResponse(buffer) {
+    return {
+        statusCode: 200,
+        headers: {'Content-Type': 'image/jpeg'},
+        body: buffer
     };
 }
 
@@ -192,6 +211,7 @@ function normalizeStoryConfig(raw, serverConfig) {
     const config = raw || {};
     return {
         title: config.title,
+        author: config.author || config.creator || null,
         language: config.language || config.lang || null,
         storyIdea: config.storyIdea || config.storyPrompt || config.prompt || '',
         model: config.model || config.chatModel || serverConfig.chatModel || DEFAULT_CHAT_MODEL,
@@ -375,6 +395,41 @@ function buildFeed(slug, outline) {
     return rss;
 }
 
+function chunkTextForTts(text, limit) {
+    const maxLen = limit || 4000;
+    const paragraphs = text.split(/\n\s*\n/);
+    const chunks = [];
+    let current = '';
+    function pushCurrent() {
+        if (current.trim()) chunks.push(current.trim());
+        current = '';
+    }
+    for (var i = 0; i < paragraphs.length; i++) {
+        var p = paragraphs[i].trim();
+        if (!p) continue;
+        if (p.length > maxLen) {
+            // split large paragraph by sentences
+            var sentences = p.split(/(?<=[.!?])\s+/);
+            for (var s = 0; s < sentences.length; s++) {
+                var sentence = sentences[s];
+                if ((current + ' ' + sentence).trim().length > maxLen) {
+                    pushCurrent();
+                    current = sentence;
+                } else {
+                    current = (current ? current + ' ' : '') + sentence;
+                }
+            }
+            continue;
+        }
+        if ((current + '\n\n' + p).trim().length > maxLen) {
+            pushCurrent();
+        }
+        current = current ? current + '\n\n' + p : p;
+    }
+    pushCurrent();
+    return chunks;
+}
+
 async function loadStoryConfig(paths) {
     const exists = await fileExists(paths.config);
     if (!exists) return null;
@@ -460,10 +515,19 @@ async function ensureAudio(index, slug, paths, storyConfig) {
 
     try {
         await ensureDir(paths.audioDir);
+        const coverRes = await ensureCover(slug, paths, storyConfig).catch(function () { return {status: 'error'}; });
+        if (coverRes && coverRes.path) storyConfig.coverPath = coverRes.path;
         const chapterText = await fs.promises.readFile(paths.chapterFile(index), 'utf8');
-        const buffer = await textToSpeech(chapterText, {model: storyConfig.ttsModel, voice: storyConfig.voice, instructions: storyConfig.ttsInstructions});
-        await writeFileAtomic(audioFile, buffer);
-        return {status: 'ready', buffer: buffer};
+        const parts = chunkTextForTts(chapterText, 4000);
+        const buffers = [];
+        for (var i = 0; i < parts.length; i++) {
+            const buf = await textToSpeech(parts[i], {model: storyConfig.ttsModel, voice: storyConfig.voice, instructions: storyConfig.ttsInstructions});
+            buffers.push(buf);
+        }
+        const merged = Buffer.concat(buffers);
+        await writeFileAtomic(audioFile, merged);
+        await tagMp3(audioFile, index, storyConfig.title, storyConfig.author, storyConfig.coverPath);
+        return {status: 'ready', buffer: merged};
     } catch (e) {
         throw e;
     } finally {
@@ -614,6 +678,111 @@ async function serveChapterAudio(slug, chapterIndex, serverConfig) {
     return buildAudioResponse(audioStatus.buffer);
 }
 
+async function ensureZip(slug, paths, outline, storyConfig) {
+    const zipFile = paths.zipFile;
+    const exists = await fileExists(zipFile);
+    if (exists) return {status: 'ready', buffer: await fs.promises.readFile(zipFile)};
+
+    const key = 'zip:' + slug;
+    const locked = acquireLock(key);
+    if (!locked) return {status: 'pending'};
+
+    try {
+        await ensureDir(paths.audioDir);
+        // ensure all chapters and audio
+        const total = outline && outline.chapters ? outline.chapters.length : 0;
+        for (var i = 1; i <= total; i++) {
+            await ensureChaptersThrough(i, slug, paths, outline, storyConfig);
+            await ensureAudio(i, slug, paths, storyConfig);
+        }
+        const audioFiles = [];
+        for (var j = 1; j <= total; j++) {
+            audioFiles.push(paths.audioFile(j));
+        }
+        const tmpZip = zipFile + '.tmp';
+        await new Promise(function (resolve, reject) {
+            const args = ['-j', tmpZip].concat(audioFiles);
+            const proc = spawn('zip', args);
+            proc.on('exit', function (code) {
+                if (code === 0) resolve();
+                else reject(new Error('zip exited with code ' + code));
+            });
+            proc.on('error', reject);
+        });
+        await fs.promises.rename(tmpZip, zipFile);
+        const buffer = await fs.promises.readFile(zipFile);
+        return {status: 'ready', buffer: buffer};
+    } catch (e) {
+        throw e;
+    } finally {
+        releaseLock(key);
+    }
+}
+
+async function ensureCover(slug, paths, storyConfig) {
+    const exists = await fileExists(paths.cover);
+    if (exists) return {status: 'ready', path: paths.cover};
+    const key = 'cover:' + slug;
+    const locked = acquireLock(key);
+    if (!locked) return {status: 'pending'};
+    try {
+        await ensureDir(paths.base);
+        const prompt = 'Book cover art, bedtime story, warm pastel colors, gentle illustration. Story idea: ' + storyConfig.storyIdea;
+        const img = await generateImage(prompt, {model: 'gpt-image-1', size: '1024x1024'});
+        await writeFileAtomic(paths.cover, img);
+        return {status: 'ready', path: paths.cover};
+    } catch (e) {
+        throw e;
+    } finally {
+        releaseLock(key);
+    }
+}
+
+function tagMp3(filePath, chapterIndex, bookTitle, author, coverPath) {
+    const title = bookTitle ? bookTitle + ' - Chapter ' + chapterIndex : 'Chapter ' + chapterIndex;
+    const args = ['-t', title];
+    if (bookTitle) args.push('-A', bookTitle);
+    if (author) args.push('-a', author);
+    if (coverPath) args.push('-j', coverPath);
+    args.push(filePath);
+    return new Promise(function (resolve) {
+        const proc = spawn('id3v2', args);
+        proc.on('exit', function () { resolve(); });
+        proc.on('error', function () { resolve(); });
+    });
+}
+
+async function serveZip(slug, serverConfig) {
+    const baseDir = serverConfig.storiesDir || STORIES_DIR;
+    const paths = pathForStory(baseDir, slug);
+    const storyConfRaw = await loadStoryConfig(paths);
+    if (!storyConfRaw) return buildMissing();
+    const storyConfig = normalizeStoryConfig(storyConfRaw, serverConfig);
+    storyConfig.slug = slug;
+    storyConfig.storiesDir = baseDir;
+
+    const outlineResult = await ensureOutline(slug, paths, storyConfig);
+    if (outlineResult.status === 'pending') return buildGenerating('outline');
+    const outline = outlineResult.outline;
+    const zipStatus = await ensureZip(slug, paths, outline, storyConfig);
+    if (zipStatus.status === 'pending') return buildGenerating('zip');
+    return buildZipResponse(zipStatus.buffer);
+}
+
+async function serveCoverImage(slug, serverConfig) {
+    const baseDir = serverConfig.storiesDir || STORIES_DIR;
+    const paths = pathForStory(baseDir, slug);
+    const storyConfRaw = await loadStoryConfig(paths);
+    if (!storyConfRaw) return buildMissing();
+    const storyConfig = normalizeStoryConfig(storyConfRaw, serverConfig);
+    storyConfig.slug = slug;
+    storyConfig.storiesDir = baseDir;
+    const coverRes = await ensureCover(slug, paths, storyConfig);
+    if (coverRes.status === 'pending') return buildGenerating('cover');
+    const buf = await fs.promises.readFile(paths.cover);
+    return buildImageResponse(buf);
+}
+
 async function serveFeed(slug, serverConfig) {
     const baseDir = serverConfig.storiesDir || STORIES_DIR;
     const paths = pathForStory(baseDir, slug);
@@ -648,7 +817,7 @@ async function servePlaylist(slug, serverConfig) {
     return buildPlaylistResponse(playlistStatus.text);
 }
 
-function buildIndexHtml(slug, config, outline) {
+function buildIndexHtml(slug, config, outline, hasCover) {
     var safeSlug = xmlEscape(slug);
     var chapterSection = '';
     if (outline && outline.chapters && outline.chapters.length) {
@@ -700,6 +869,11 @@ function buildIndexHtml(slug, config, outline) {
     var storyIdea = xmlEscape(config.storyIdea || '');
     var language = xmlEscape(config.language || '');
 
+    var coverHtml = '';
+    if (hasCover) {
+        coverHtml = '<div class="mb-3"><img src="/stories/' + safeSlug + '/cover.jpg" alt="Cover" class="img-fluid rounded shadow-sm" style="max-width:320px;"></div>';
+    }
+
     return '<!doctype html><html lang="en"><head>' +
         '<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">' +
         '<title>Story: ' + xmlEscape(config.title || slug) + '</title>' +
@@ -716,8 +890,10 @@ function buildIndexHtml(slug, config, outline) {
         '<a class="btn btn-pastel" href="/stories/' + safeSlug + '/outline.json">Outline JSON</a>' +
         '<a class="btn btn-pastel" href="/stories/' + safeSlug + '/feed.rss">Feed</a>' +
         '<a class="btn btn-pastel" href="/stories/' + safeSlug + '/audio/' + safeSlug + '.m3u">Playlist (m3u)</a>' +
+        '<a class="btn btn-pastel" href="/stories/' + safeSlug + '/audio/' + safeSlug + '.zip">Download all (zip)</a>' +
         '</div>' +
         '</div>' +
+        coverHtml +
         '</div>' +
         '<div class="card card-soft p-4 mb-4" style="background-color:#f6ffed;">' +
         '<div class="d-flex justify-content-between align-items-center mb-3"><h3 class="h5 mb-0">Outline</h3>' +
@@ -859,8 +1035,10 @@ async function serveStoryIndex(slug, serverConfig) {
     const storyConfRaw = await loadStoryConfig(paths);
     if (!storyConfRaw) return buildMissing();
     const storyConfig = normalizeStoryConfig(storyConfRaw, serverConfig);
+    const coverRes = await ensureCover(slug, paths, storyConfig).catch(function () { return null; });
+    const coverReady = coverRes && coverRes.status === 'ready';
     const outline = await loadOutline(paths);
-    const html = buildIndexHtml(slug, storyConfig, outline);
+    const html = buildIndexHtml(slug, storyConfig, outline, coverReady);
     return buildHtmlResponse(html);
 }
 
@@ -888,6 +1066,8 @@ module.exports = {
     serveChapterAudio,
     serveFeed,
     servePlaylist,
+    serveZip,
+    serveCoverImage,
     serveStoryIndex,
     serveChapterHtml,
     serveStoryList,
