@@ -711,6 +711,73 @@ function buildChapterHtml(slug, chapterIndex) {
         '</body></html>';
 }
 
+async function listStories(baseDir) {
+    const stories = [];
+    let dirEntries;
+    try {
+        dirEntries = await fs.promises.readdir(baseDir, {withFileTypes: true});
+    } catch (e) {
+        return stories;
+    }
+
+    for (var i = 0; i < dirEntries.length; i++) {
+        const entry = dirEntries[i];
+        if (!entry.isDirectory()) continue;
+        const slug = entry.name;
+        const p = pathForStory(baseDir, slug);
+        const hasConfig = await fileExists(p.config);
+        if (!hasConfig) continue;
+        let conf = {};
+        try {
+            conf = await readJsonFile(p.config);
+        } catch (e) {
+            conf = {};
+        }
+        const outlineReady = await fileExists(p.outline);
+        stories.push({
+            slug: slug,
+            title: conf.title || slug,
+            language: conf.language || '',
+            idea: conf.storyIdea || conf.storyPrompt || '',
+            outlineReady: outlineReady
+        });
+    }
+    return stories;
+}
+
+function buildStoryListHtml(stories) {
+    var cards = '';
+    if (!stories || stories.length === 0) {
+        cards = '<div class="alert alert-info">No stories found yet. Add a folder under stories/&lt;slug&gt;/ with a config.json to begin.</div>';
+    } else {
+        for (var i = 0; i < stories.length; i++) {
+            var s = stories[i];
+            cards += '<div class="card card-soft mb-3" style="background-color:#fffaf5;">' +
+                '<div class="card-body">' +
+                '<div class="d-flex justify-content-between flex-wrap align-items-start mb-2">' +
+                '<div><h2 class="h5 mb-1">' + xmlEscape(s.title) + '</h2>' +
+                '<div class="text-muted small">Slug: ' + xmlEscape(s.slug) + ' • Language: ' + xmlEscape(s.language) + '</div></div>' +
+                '<span class="badge ' + (s.outlineReady ? 'bg-success' : 'bg-warning text-dark') + '">' + (s.outlineReady ? 'Outline ready' : 'Outline pending') + '</span>' +
+                '</div>' +
+                '<p class="mb-3">' + xmlEscape(s.idea) + '</p>' +
+                '<a class="btn btn-primary btn-sm" href="/stories/' + xmlEscape(s.slug) + '/index.html">Open story</a>' +
+                '</div></div>';
+        }
+    }
+
+    return '<!doctype html><html lang="en"><head>' +
+        '<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">' +
+        '<title>Story Index</title>' +
+        '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">' +
+        '<style>body{background:linear-gradient(135deg,#fdfbfb 0%,#ebedee 100%);} .card-soft{border:0;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,0.08);} </style>' +
+        '</head><body>' +
+        '<div class="container py-4">' +
+        '<div class="mb-4"><h1 class="h3">Stories</h1><p class="text-muted">Available story configurations detected under stories/.</p></div>' +
+        cards +
+        '</div>' +
+        '</body></html>';
+}
+
 async function serveStoryIndex(slug, serverConfig) {
     const baseDir = serverConfig.storiesDir || STORIES_DIR;
     const paths = pathForStory(baseDir, slug);
@@ -733,6 +800,13 @@ async function serveChapterHtml(slug, chapterIndex, serverConfig) {
     return buildHtmlResponse(html);
 }
 
+async function serveStoryList(serverConfig) {
+    const baseDir = serverConfig.storiesDir || STORIES_DIR;
+    const stories = await listStories(baseDir);
+    const html = buildStoryListHtml(stories);
+    return buildHtmlResponse(html);
+}
+
 module.exports = {
     serveOutline,
     serveChapterMarkdown,
@@ -740,5 +814,6 @@ module.exports = {
     serveFeed,
     serveStoryIndex,
     serveChapterHtml,
+    serveStoryList,
     STORIES_DIR
 };

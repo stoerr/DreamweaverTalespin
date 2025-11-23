@@ -1,5 +1,5 @@
 const url = require('url');
-const {serveOutline, serveChapterMarkdown, serveChapterAudio, serveFeed, serveStoryIndex, serveChapterHtml} = require('./storygen');
+const {serveOutline, serveChapterMarkdown, serveChapterAudio, serveFeed, serveStoryIndex, serveChapterHtml, serveStoryList} = require('./storygen');
 
 function sendResponse(res, result) {
     res.statusCode = result.statusCode;
@@ -21,7 +21,20 @@ async function handleRequest(req, res, serverConfig) {
     }
 
     const parsed = url.parse(req.url);
-    const parts = (parsed.pathname || '').split('/').filter(function (p) { return p; });
+    const pathname = parsed.pathname || '/';
+    if (pathname === '/storyindex.html' || pathname === '/storyindex') {
+        try {
+            const result = await serveStoryList(serverConfig);
+            sendResponse(res, result);
+        } catch (e) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'text/plain');
+            res.end('Internal server error: ' + e.message);
+        }
+        return;
+    }
+
+    const parts = (pathname).split('/').filter(function (p) { return p; });
 
     if (parts.length < 2 || parts[0] !== 'stories') {
         res.statusCode = 404;

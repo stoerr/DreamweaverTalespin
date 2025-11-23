@@ -53,6 +53,10 @@ Required files and directories:
 
 All endpoints are under /stories/<slug>/….
 
+2.0 Global story index
+• GET /storyindex.html (or /storyindex)
+    • 200 OK + text/html: lists all stories discovered under stories/<slug>/ that contain a config.json, showing title, language, story idea, and whether the outline exists. Links into each /stories/<slug>/index.html.
+
 2.0 Story landing page
 • GET /stories/<slug>/ (or /stories/<slug>/index.html)
     • 200 OK + text/html: Generated summary page rendered with Bootstrap (via CDN) in a light pastel style.
