@@ -39,11 +39,6 @@ Required files and directories:
 • stories/<slug>/chapters/NNN.md (chapter N, zero-padded)
 • stories/<slug>/audio/NNN.mp3
 • stories/<slug>/feed.rss
-• Optional lock files (see §5):
-• outline.lock
-• chapters/NNN.lock
-• audio/NNN.lock
-• feed.lock
 
 <slug> is a short, URL-safe identifier, derived from the title when the story is created and kept stable.
 
@@ -133,14 +128,14 @@ Once a derived file exists, it is never overwritten.
 On any request requiring the outline:
 
 1. If outline.json exists: use it.
-2. Else, attempt to create outline.lock (exclusive).
-   • If lock creation fails and outline.json does not yet exist: return 202 Accepted (generation in progress).
+2. Else, attempt to acquire an in-memory lock for this outline.
+   • If lock already held and outline.json does not yet exist: return 202 Accepted (generation in progress).
    • If lock acquired:
-   • Read config.json; if missing → 404.
-   • Run outline-generation phase.
-   • Write outline.tmp, then rename to outline.json.
-   • Remove outline.lock.
-   • Return 200 with outline.json.
+       • Read config.json; if missing → 404.
+       • Run outline-generation phase.
+       • Write outline.tmp, then rename to outline.json.
+       • Release the in-memory lock.
+       • Return 200 with outline.json.
 
 3.2 Chapters (chapters/NNN.md)
 
@@ -151,14 +146,15 @@ On GET /chapters/<n>.md:
 3. For each i from 1 to <n>:
    • If chapters/NNN.md exists: skip.
    • Else:
-   • Try to create chapters/NNN.lock.
-   • If lock exists: return 202 for the whole request.
-   • If acquired:
-   • Build chapter-generation context (book metadata + previous chapters, as defined in the algorithm). ￼
-   • Call the model to generate chapter i.
-   • Write chapters/NNN.tmp, then rename to chapters/NNN.md.
-   • Remove chapters/NNN.lock.
+       • Try to acquire an in-memory generation lock for that chapter.
+       • If lock held: return 202 for the whole request.
+       • If acquired:
+           • Build chapter-generation context (book metadata + previous chapters, as defined in the algorithm).
+           • Call the model to generate chapter i.
+           • Write chapters/NNN.tmp, then rename to chapters/NNN.md.
+           • Release the in-memory lock.
 4. Return 200 with chapters/NNN.md.
+5. Optimization: after chapter n is ready and served, the server may start generating chapter n+1 in the background.
 
 Thus, requesting chapter n may generate chapters 1..n.
 
@@ -169,14 +165,15 @@ On GET /chapters/<n>.mp3:
 1. Ensure chapters/NNN.md exists via 3.2; if chapters are in progress, return 202.
 2. If audio/NNN.mp3 exists: return 200.
 3. Else:
-   • Try to create audio/NNN.lock.
+   • Try to acquire an in-memory generation lock for that audio file.
    • If lock exists: return 202.
    • If acquired:
-   • Read chapters/NNN.md.
-   • Run TTS to produce MP3.
-   • Write audio/NNN.tmp, then rename to audio/NNN.mp3.
-   • Remove audio/NNN.lock.
+       • Read chapters/NNN.md.
+       • Run TTS to produce MP3.
+       • Write audio/NNN.tmp, then rename to audio/NNN.mp3.
+       • Release the in-memory lock.
 4. Return 200 with audio/NNN.mp3.
+5. Optimization: after serving audio for chapter n, the server may start generating audio for chapter n+1 in the background (after ensuring chapter n+1 exists).
 
 3.4 RSS (feed.rss)
 
@@ -185,18 +182,18 @@ On GET /feed.rss:
 1. Ensure outline exists via 3.1; if in progress, return 202.
 2. If feed.rss exists: return 200.
 3. Else:
-   • Try to create feed.lock.
+   • Try to acquire an in-memory generation lock for the feed.
    • If lock exists: return 202.
    • If acquired:
-   • Read outline.json.
-   • Build RSS:
-   • Channel title/description from book metadata.
-   •    <item> per chapter, with:
-   • Title = chapter title.
-   • Description = short or detailed description.
-   • Link(s) to /stories/<slug>/chapters/<n>.mp3 or <n>.md.
-   • Write feed.tmp, then rename to feed.rss.
-   • Remove feed.lock.
+       • Read outline.json.
+       • Build RSS:
+           • Channel title/description from book metadata.
+           • <item> per chapter, with:
+             • Title = chapter title.
+             • Description = short or detailed description.
+             • Link(s) to /stories/<slug>/chapters/<n>.mp3 or <n>.md.
+       • Write feed.tmp, then rename to feed.rss.
+       • Release the in-memory lock.
 4. Return 200 with feed.rss.
 
 ⸻
@@ -214,9 +211,9 @@ New story variants should be created under new slugs.
 ⸻
 
 5. Locking and 202 semantics
-   • Lock files are simple presence-based mutexes, created with exclusive open/creation.
+   • Locking is in-memory only (a per-process map). No *.lock files are written to disk.
    • While a lock exists and the final artifact does not:
-   • Requests return 202 Accepted with a small JSON status message.
+       • Requests return 202 Accepted with a small JSON status message.
    • No internal blocking; the client is responsible for retrying.
    • No cache headers are required for 202 responses; they are not meant to be cached as final content.
 

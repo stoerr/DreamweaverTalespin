@@ -86,25 +86,15 @@ function pathForStory(baseDir, slug) {
         base: storyDir,
         config: path.join(storyDir, 'config.json'),
         outline: path.join(storyDir, 'outline.json'),
-        outlineLock: path.join(storyDir, 'outline.lock'),
         feed: path.join(storyDir, 'feed.rss'),
-        feedLock: path.join(storyDir, 'feed.lock'),
         chaptersDir: chaptersDir,
         audioDir: audioDir,
         chapterFile: function (index) {
             const name = String(index).padStart(3, '0') + '.md';
             return path.join(chaptersDir, name);
         },
-        chapterLock: function (index) {
-            const name = String(index).padStart(3, '0') + '.lock';
-            return path.join(chaptersDir, name);
-        },
         audioFile: function (index) {
             const name = String(index).padStart(3, '0') + '.mp3';
-            return path.join(audioDir, name);
-        },
-        audioLock: function (index) {
-            const name = String(index).padStart(3, '0') + '.lock';
             return path.join(audioDir, name);
         }
     };
@@ -125,24 +115,14 @@ async function writeFileAtomic(target, content, encoding) {
     await fs.promises.rename(tmp, target);
 }
 
-async function tryLock(lockfile) {
-    try {
-        const handle = await fs.promises.open(lockfile, 'wx');
-        await handle.close();
-        return true;
-    } catch (e) {
-        if (e && e.code === 'EEXIST') return false;
-        throw e;
-    }
+const activeLocks = new Set();
+function acquireLock(key) {
+    if (activeLocks.has(key)) return false;
+    activeLocks.add(key);
+    return true;
 }
-
-async function releaseLock(lockfile) {
-    try {
-        await fs.promises.unlink(lockfile);
-    } catch (e) {
-        if (e && e.code === 'ENOENT') return;
-        throw e;
-    }
+function releaseLock(key) {
+    activeLocks.delete(key);
 }
 
 function buildOutlineResponse(bodyText) {
@@ -411,7 +391,8 @@ async function ensureOutline(slug, paths, storyConfig) {
         return {status: 'ready', outline: JSON.parse(content), content: content};
     }
 
-    const locked = await tryLock(paths.outlineLock);
+    const key = 'outline:' + slug;
+    const locked = acquireLock(key);
     if (!locked) return {status: 'pending'};
 
     try {
@@ -419,11 +400,11 @@ async function ensureOutline(slug, paths, storyConfig) {
         const generated = await generateOutline(storyConfig);
         const body = JSON.stringify(generated, null, 2);
         await writeFileAtomic(paths.outline, body, 'utf8');
-        await releaseLock(paths.outlineLock);
         return {status: 'ready', outline: generated, content: body};
     } catch (e) {
-        await releaseLock(paths.outlineLock);
         throw e;
+    } finally {
+        releaseLock(key);
     }
 }
 
@@ -433,7 +414,8 @@ async function ensureChapter(index, slug, paths, outline, storyConfig) {
     if (exists) return {status: 'ready'};
 
     await ensureDir(paths.chaptersDir);
-    const locked = await tryLock(paths.chapterLock(index));
+    const key = 'chapter:' + slug + ':' + index;
+    const locked = acquireLock(key);
     if (!locked) return {status: 'pending'};
 
     try {
@@ -441,11 +423,11 @@ async function ensureChapter(index, slug, paths, outline, storyConfig) {
         const title = outline.chapters[index - 1].chaptertitle || ('Chapter ' + index);
         const md = chapterMarkdown(title, text, outline.chapters[index - 1].chaptershortdescription);
         await writeFileAtomic(file, md, 'utf8');
-        await releaseLock(paths.chapterLock(index));
         return {status: 'ready'};
     } catch (e) {
-        await releaseLock(paths.chapterLock(index));
         throw e;
+    } finally {
+        releaseLock(key);
     }
 }
 
@@ -463,7 +445,8 @@ async function ensureAudio(index, slug, paths, storyConfig) {
     if (exists) return {status: 'ready', buffer: await fs.promises.readFile(audioFile)};
 
     await ensureDir(paths.audioDir);
-    const locked = await tryLock(paths.audioLock(index));
+    const key = 'audio:' + slug + ':' + index;
+    const locked = acquireLock(key);
     if (!locked) return {status: 'pending'};
 
     try {
@@ -471,11 +454,11 @@ async function ensureAudio(index, slug, paths, storyConfig) {
         const chapterText = await fs.promises.readFile(paths.chapterFile(index), 'utf8');
         const buffer = await textToSpeech(chapterText, {model: storyConfig.ttsModel, voice: storyConfig.voice, instructions: storyConfig.ttsInstructions});
         await writeFileAtomic(audioFile, buffer);
-        await releaseLock(paths.audioLock(index));
         return {status: 'ready', buffer: buffer};
     } catch (e) {
-        await releaseLock(paths.audioLock(index));
         throw e;
+    } finally {
+        releaseLock(key);
     }
 }
 
@@ -486,18 +469,43 @@ async function ensureFeed(slug, paths, outline) {
         return {status: 'ready', text: text};
     }
 
-    const locked = await tryLock(paths.feedLock);
+    const key = 'feed:' + slug;
+    const locked = acquireLock(key);
     if (!locked) return {status: 'pending'};
 
     try {
         const feed = buildFeed(slug, outline);
         await writeFileAtomic(paths.feed, feed, 'utf8');
-        await releaseLock(paths.feedLock);
         return {status: 'ready', text: feed};
     } catch (e) {
-        await releaseLock(paths.feedLock);
         throw e;
+    } finally {
+        releaseLock(key);
     }
+}
+
+function backgroundGenerateChapter(index, slug, paths, outline, storyConfig) {
+    if (!outline || !outline.chapters || index > outline.chapters.length) return;
+    setImmediate(function () {
+        ensureChaptersThrough(index, slug, paths, outline, storyConfig).catch(function (e) {
+            console.error('Background chapter generation failed for', slug, index, e);
+        });
+    });
+}
+
+function backgroundGenerateAudio(index, slug, paths, outline, storyConfig) {
+    if (!outline || !outline.chapters || index > outline.chapters.length) return;
+    setImmediate(function () {
+        ensureChaptersThrough(index, slug, paths, outline, storyConfig)
+            .then(function (status) {
+                if (status.status === 'ready') {
+                    return ensureAudio(index, slug, paths, storyConfig);
+                }
+            })
+            .catch(function (e) {
+                console.error('Background audio generation failed for', slug, index, e);
+            });
+    });
 }
 
 async function serveOutline(slug, serverConfig) {
@@ -532,6 +540,9 @@ async function serveChapterMarkdown(slug, chapterIndex, serverConfig) {
     if (chaptersStatus.status === 'pending') return buildGenerating('chapter', chapterIndex);
 
     const text = await fs.promises.readFile(paths.chapterFile(chapterIndex), 'utf8');
+    if (chapterIndex < outline.chapters.length) {
+        backgroundGenerateChapter(chapterIndex + 1, slug, paths, outline, storyConfig);
+    }
     return buildMarkdownResponse(text);
 }
 
@@ -554,6 +565,9 @@ async function serveChapterAudio(slug, chapterIndex, serverConfig) {
 
     const audioStatus = await ensureAudio(chapterIndex, slug, paths, storyConfig);
     if (audioStatus.status === 'pending') return buildGenerating('audio', chapterIndex);
+    if (chapterIndex < outline.chapters.length) {
+        backgroundGenerateAudio(chapterIndex + 1, slug, paths, outline, storyConfig);
+    }
     return buildAudioResponse(audioStatus.buffer);
 }
 
@@ -703,7 +717,7 @@ function buildChapterHtml(slug, chapterIndex) {
         'function setStatus(msg,cls){statusEl.textContent=msg;statusEl.className="mb-2 small "+(cls||"text-muted");}' +
         'function loadOutline(){return fetch("/stories/"+slug+"/outline.json").then(function(r){if(r.status===200)return r.json();if(r.status===202){setStatus("Generating outline...","text-info");return new Promise(function(res){setTimeout(function(){loadOutline().then(res);},1500);});}throw new Error("Failed to load outline: "+r.status);});}' +
         'function updateNav(outline){if(!outline||!outline.chapters)return;var total=outline.chapters.length; if(idx>=total) {nextLink.classList.add("disabled"); nextLink.href="#";} else {nextLink.classList.remove("disabled"); nextLink.href="/stories/"+slug+"/chapters/"+(idx+1)+".html";} var ch=outline.chapters[idx-1]; if(ch){titleEl.textContent="Chapter "+idx+": "+(ch.chaptertitle||ch.title||"");}}' +
-        'function loadMarkdown(){setStatus("Loading chapter markdown...","text-info");return fetch("/stories/"+slug+"/chapters/"+idx+".md").then(function(r){if(r.status===200)return r.text();if(r.status===202){setStatus("Chapter is being generated...","text-info");return new Promise(function(res){setTimeout(function(){loadMarkdown().then(res);},1500);});}throw new Error("Failed to load chapter: "+r.status);});}' +
+        'function loadMarkdown(){setStatus("Generating chapter content...","text-info");return fetch("/stories/"+slug+"/chapters/"+idx+".md").then(function(r){if(r.status===200)return r.text();if(r.status===202){setStatus("Chapter is being generated...","text-info");return new Promise(function(res){setTimeout(function(){loadMarkdown().then(res);},1500);});}throw new Error("Failed to load chapter: "+r.status);});}' +
         'loadOutline().then(function(out){updateNav(out);}).catch(function(e){setStatus(e.message,"text-danger");});' +
         'loadMarkdown().then(function(md){setStatus("","text-muted");contentEl.innerHTML=marked.parse(md);}).catch(function(e){setStatus(e.message,"text-danger");});' +
         '})();' +

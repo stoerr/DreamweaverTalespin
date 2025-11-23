@@ -1,17 +1,13 @@
 # Ignore lazily generated story artifacts
 stories/*/outline.json
 stories/*/feed.rss
-stories/*/outline.lock
-stories/*/feed.lock
 stories/*/outline.tmp
 stories/*/feed.tmp
 
 # Chapter text and locks
 stories/*/chapters/*.md
-stories/*/chapters/*.lock
 stories/*/chapters/*.tmp
 
 # Audio outputs and locks
 stories/*/audio/*.mp3
-stories/*/audio/*.lock
 stories/*/audio/*.tmp
