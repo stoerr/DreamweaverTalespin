@@ -1,4 +1,3 @@
-const url = require('url');
 const {serveOutline, serveChapterMarkdown, serveChapterAudio, serveFeed, serveStoryIndex, serveChapterHtml, serveStoryList, servePlaylist, serveZip, serveCoverImage} = require('./storygen');
 
 function sendResponse(res, result) {
@@ -20,7 +19,7 @@ async function handleRequest(req, res, serverConfig) {
         return;
     }
 
-    const parsed = url.parse(req.url);
+    const parsed = new URL(req.url, 'http://localhost');
     const pathname = parsed.pathname || '/';
     if (pathname === '/storyindex.html' || pathname === '/storyindex') {
         try {

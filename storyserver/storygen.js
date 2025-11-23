@@ -25,6 +25,18 @@ function loadPrompt(filename, fallbackText) {
 const DEFAULT_OUTLINE_PROMPT = loadPrompt('outline.md', OUTLINE_PROMPT_FALLBACK);
 const DEFAULT_CHAPTER_PROMPT = loadPrompt('chapter.md', CHAPTER_PROMPT_FALLBACK);
 
+function ts() {
+    return new Date().toISOString().split('.')[0];
+}
+
+function logInfo(msg) {
+    console.error(ts() + ' INFO ' + msg);
+}
+
+function logError(msg, err) {
+    console.error(ts() + ' ERROR ' + msg + (err ? (' :: ' + err.message || err) : ''));
+}
+
 function getLanguageInstruction(languageCode) {
     if (!languageCode) return '';
     const map = {en: 'English', de: 'German', fr: 'French', es: 'Spanish'};
@@ -284,6 +296,15 @@ async function generateOutline(storyConfig) {
         temperature: storyConfig.temperature,
         maxTokens: storyConfig.maxTokens,
         service_tier: storyConfig.serviceTier
+    }).catch(async function (err) {
+        // fallback without response_format if API rejects it
+        logError('Outline generation failed with response_format, retrying without it', err);
+        return callChatCompletions(messages, {
+            model: storyConfig.model,
+            temperature: storyConfig.temperature,
+            maxTokens: storyConfig.maxTokens,
+            service_tier: storyConfig.serviceTier
+        });
     });
     const parsed = parseOutline(text);
     parsed.language = storyConfig.language || null;
@@ -461,11 +482,19 @@ async function ensureOutline(slug, paths, storyConfig) {
 
     try {
         await ensureDir(paths.base);
+        logInfo('Generating outline for story ' + slug);
         const generated = await generateOutline(storyConfig);
         const body = JSON.stringify(generated, null, 2);
         await writeFileAtomic(paths.outline, body, 'utf8');
+        setImmediate(function () {
+            ensureCover(slug, paths, storyConfig).catch(function (e) {
+                logError('Background cover generation failed for story ' + slug, e);
+            });
+        });
+        logInfo('Finished outline for story ' + slug);
         return {status: 'ready', outline: generated, content: body};
     } catch (e) {
+        logError('Failed generating outline for story ' + slug, e);
         throw e;
     } finally {
         releaseLock(key);
@@ -483,12 +512,15 @@ async function ensureChapter(index, slug, paths, outline, storyConfig) {
     if (!locked) return {status: 'pending'};
 
     try {
+        logInfo('Generating chapter ' + index + ' for story ' + slug);
         const text = await generateChapterText(index, outline, storyConfig);
         const title = outline.chapters[index - 1].chaptertitle || ('Chapter ' + index);
         const md = chapterMarkdown(title, text, outline.chapters[index - 1].chaptershortdescription);
         await writeFileAtomic(file, md, 'utf8');
+        logInfo('Finished chapter ' + index + ' for story ' + slug);
         return {status: 'ready'};
     } catch (e) {
+        logError('Failed generating chapter ' + index + ' for story ' + slug, e);
         throw e;
     } finally {
         releaseLock(key);
@@ -517,6 +549,7 @@ async function ensureAudio(index, slug, paths, storyConfig) {
         await ensureDir(paths.audioDir);
         const coverRes = await ensureCover(slug, paths, storyConfig).catch(function () { return {status: 'error'}; });
         if (coverRes && coverRes.path) storyConfig.coverPath = coverRes.path;
+        logInfo('Generating audio for chapter ' + index + ' of story ' + slug);
         const chapterText = await fs.promises.readFile(paths.chapterFile(index), 'utf8');
         const parts = chunkTextForTts(chapterText, 4000);
         const buffers = [];
@@ -527,8 +560,10 @@ async function ensureAudio(index, slug, paths, storyConfig) {
         const merged = Buffer.concat(buffers);
         await writeFileAtomic(audioFile, merged);
         await tagMp3(audioFile, index, storyConfig.title, storyConfig.author, storyConfig.coverPath);
+        logInfo('Finished audio for chapter ' + index + ' of story ' + slug);
         return {status: 'ready', buffer: merged};
     } catch (e) {
+        logError('Failed generating audio for chapter ' + index + ' of story ' + slug, e);
         throw e;
     } finally {
         releaseLock(key);
@@ -547,10 +582,13 @@ async function ensureFeed(slug, paths, outline) {
     if (!locked) return {status: 'pending'};
 
     try {
+        logInfo('Generating feed for story ' + slug);
         const feed = buildFeed(slug, outline);
         await writeFileAtomic(paths.feed, feed, 'utf8');
+        logInfo('Finished feed for story ' + slug);
         return {status: 'ready', text: feed};
     } catch (e) {
+        logError('Failed generating feed for story ' + slug, e);
         throw e;
     } finally {
         releaseLock(key);
@@ -691,6 +729,7 @@ async function ensureZip(slug, paths, outline, storyConfig) {
         await ensureDir(paths.audioDir);
         // ensure all chapters and audio
         const total = outline && outline.chapters ? outline.chapters.length : 0;
+        logInfo('Preparing zip for story ' + slug + ' (' + total + ' chapters)');
         for (var i = 1; i <= total; i++) {
             await ensureChaptersThrough(i, slug, paths, outline, storyConfig);
             await ensureAudio(i, slug, paths, storyConfig);
@@ -711,8 +750,10 @@ async function ensureZip(slug, paths, outline, storyConfig) {
         });
         await fs.promises.rename(tmpZip, zipFile);
         const buffer = await fs.promises.readFile(zipFile);
+        logInfo('Finished zip for story ' + slug);
         return {status: 'ready', buffer: buffer};
     } catch (e) {
+        logError('Failed creating zip for story ' + slug, e);
         throw e;
     } finally {
         releaseLock(key);
@@ -727,11 +768,14 @@ async function ensureCover(slug, paths, storyConfig) {
     if (!locked) return {status: 'pending'};
     try {
         await ensureDir(paths.base);
-        const prompt = 'Book cover art, bedtime story, warm pastel colors, gentle illustration. Story idea: ' + storyConfig.storyIdea;
-        const img = await generateImage(prompt, {model: 'gpt-image-1', size: '1024x1024'});
+        const prompt = 'Book cover art, warm pastel colors, gentle illustration. Story idea: ' + storyConfig.storyIdea;
+        logInfo('Generating cover for story ' + slug);
+        const img = await generateImage(prompt, {model: 'dall-e-3', size: '1024x1024'});
         await writeFileAtomic(paths.cover, img);
+        logInfo('Finished cover for story ' + slug);
         return {status: 'ready', path: paths.cover};
     } catch (e) {
+        logError('Failed generating cover for story ' + slug, e);
         throw e;
     } finally {
         releaseLock(key);
@@ -876,7 +920,7 @@ function buildIndexHtml(slug, config, outline, hasCover) {
 
     var coverHtml = '';
     if (hasCover) {
-        coverHtml = '<div class="mb-3"><img src="/stories/' + safeSlug + '/cover.jpg" alt="Cover" class="img-fluid rounded shadow-sm" style="max-width:320px;"></div>';
+        coverHtml = '<img src="/stories/' + safeSlug + '/cover.jpg" alt="Cover" class="img-fluid rounded shadow-sm float-md-end ms-md-3 mb-3" style="max-width:320px; min-width:200px;">';
     }
 
     return '<!doctype html><html lang="en"><head>' +
@@ -887,18 +931,19 @@ function buildIndexHtml(slug, config, outline, hasCover) {
         '</head><body>' +
         '<div class="container py-4">' +
         '<div class="card card-soft p-4 mb-4" style="background-color:#fffaf5;">' +
-        '<div class="d-flex justify-content-between align-items-start flex-wrap">' +
-        '<div><h1 class="h3 mb-3">' + xmlEscape(config.title || 'Story') + '</h1>' +
+        '<div>' +
+        coverHtml +
+        '<h1 class="h3 mb-3">' + xmlEscape(config.title || 'Story') + '</h1>' +
         '<p class="text-muted mb-1"><strong>Language:</strong> ' + language + '</p>' +
-        '<p class="text-muted"><strong>Story idea:</strong> ' + storyIdea + '</p></div>' +
-        '<div class="d-flex gap-2 flex-wrap">' +
+        '<p class="text-muted"><strong>Story idea:</strong> ' + storyIdea + '</p>' +
+        '<div class="d-flex gap-2 flex-wrap mt-2">' +
         '<a class="btn btn-pastel" href="/stories/' + safeSlug + '/outline.json">Outline JSON</a>' +
         '<a class="btn btn-pastel" href="/stories/' + safeSlug + '/feed.rss">Feed</a>' +
         '<a class="btn btn-pastel" href="/stories/' + safeSlug + '/audio/' + safeSlug + '.m3u">Playlist (m3u)</a>' +
         '<a class="btn btn-pastel" href="/stories/' + safeSlug + '/audio/' + safeSlug + '.zip">Download all (zip)</a>' +
         '</div>' +
+        '<div class="clearfix"></div>' +
         '</div>' +
-        coverHtml +
         '</div>' +
         '<div class="card card-soft p-4 mb-4" style="background-color:#f6ffed;">' +
         '<div class="d-flex justify-content-between align-items-center mb-3"><h3 class="h5 mb-0">Outline</h3>' +

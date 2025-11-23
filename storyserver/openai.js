@@ -109,9 +109,11 @@ async function generateImage(prompt, opts) {
         response_format: 'b64_json'
     };
     const response = await performRequest('/v1/images/generations', body, false, null);
-    const b64 = response && response.data && response.data[0] && response.data[0].b64_json;
-    if (!b64) throw new Error('Invalid response from OpenAI image generation');
-    return Buffer.from(b64, 'base64');
+    const entry = response && response.data && response.data[0];
+    const b64 = entry && entry.b64_json;
+    if (b64) return Buffer.from(b64, 'base64');
+    if (entry && entry.url) throw new Error('Image generation returned URL, expected base64 content');
+    throw new Error('Invalid response from OpenAI image generation');
 }
 
 module.exports = {

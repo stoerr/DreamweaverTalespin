@@ -56,7 +56,7 @@ function start() {
     });
 
     server.listen(serverConfig.port, function () {
-        console.log('Story server listening on port ' + serverConfig.port + ' using stories dir ' + serverConfig.storiesDir);
+        console.error(new Date().toISOString().split('.')[0] + ' INFO ' + 'Story server listening on port ' + serverConfig.port + ' using stories dir ' + serverConfig.storiesDir);
     });
 }
 

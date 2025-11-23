@@ -251,6 +251,7 @@ New story variants should be created under new slugs.
        • Requests return 202 Accepted with a small JSON status message.
    • No internal blocking; the client is responsible for retrying.
    • No cache headers are required for 202 responses; they are not meant to be cached as final content.
+   • The server logs major actions (generation start/end, failures) with timestamped messages to stderr.
 
 ⸻
 
@@ -264,11 +265,4 @@ Short summary
 
 Further ideas to be done:
 
-- fix mp3 generation: the prompt can only be up to 4000 characters. Split on paragraph boundaries to not cut sentences.
-- serve a zip of all mp3 files for easy download of the whole story using the external zip program. Before that generate
-  all mp3 files if not yet done.
-- generate cover art based on story idea using gpt-image-1 and include as cover.jpg and display it on the story index page.
-- Add MP3 metadata tags (ID3) with chapter title, book title, author, and cover art (if available) with id3v2.
 - Later perhaps: UI to create story config files
-
-- The generate outline button should only be visible if the outline does not yet exist.
