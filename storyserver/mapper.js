@@ -1,4 +1,4 @@
-const {serveOutline, serveChapterMarkdown, serveChapterAudio, serveFeed, serveStoryIndex, serveChapterHtml, serveStoryList, servePlaylist, serveZip, serveCoverImage} = require('./storygen');
+const {serveOutline, serveChapterMarkdown, serveChapterAudio, serveFeed, serveStoryIndex, serveChapterHtml, serveStoryList, servePlaylist, serveZip, serveCoverImage, importStoryFromExport} = require('./storygen');
 
 function sendResponse(res, result) {
     res.statusCode = result.statusCode;
@@ -11,25 +11,42 @@ function sendResponse(res, result) {
     else res.end();
 }
 
+async function readRequestBody(req, limitBytes) {
+    return new Promise(function (resolve, reject) {
+        const chunks = [];
+        let size = 0;
+        req.on('data', function (chunk) {
+            size += chunk.length;
+            if (limitBytes && size > limitBytes) {
+                reject(new Error('Payload too large'));
+                req.destroy();
+                return;
+            }
+            chunks.push(chunk);
+        });
+        req.on('end', function () {
+            resolve(Buffer.concat(chunks));
+        });
+        req.on('error', reject);
+    });
+}
+
 async function handleRequest(req, res, serverConfig) {
-    if (req.method !== 'GET') {
-        res.statusCode = 405;
-        res.setHeader('Content-Type', 'text/plain');
-        res.end('Method not allowed');
-        return;
-    }
+    const method = req.method || 'GET';
 
     const parsed = new URL(req.url, 'http://localhost');
     const pathname = parsed.pathname || '/';
     if (pathname === '/storyindex.html' || pathname === '/storyindex') {
-        try {
-            const result = await serveStoryList(serverConfig);
-            sendResponse(res, result);
-        } catch (e) {
-            res.statusCode = 500;
+        if (method !== 'GET') {
+            res.statusCode = 405;
             res.setHeader('Content-Type', 'text/plain');
-            res.end('Internal server error: ' + e.message);
+            res.end('Method not allowed');
+            return;
         }
+        const result = await serveStoryList(serverConfig).catch(function (e) {
+            return {statusCode: 500, headers: {'Content-Type': 'text/plain'}, body: 'Internal server error: ' + e.message};
+        });
+        sendResponse(res, result);
         return;
     }
 
@@ -45,6 +62,38 @@ async function handleRequest(req, res, serverConfig) {
     const slug = parts[1];
 
     try {
+        if (method === 'POST' && parts.length === 2) {
+            if (serverConfig.importToken) {
+                const token = req.headers['x-story-import-token'];
+                if (token !== serverConfig.importToken) {
+                    res.statusCode = 401;
+                    res.setHeader('Content-Type', 'text/plain');
+                    res.end('Unauthorized');
+                    return;
+                }
+            }
+            const bodyBuf = await readRequestBody(req, 10 * 1024 * 1024);
+            let payload = null;
+            try {
+                payload = JSON.parse(bodyBuf.toString('utf8'));
+            } catch (e) {
+                res.statusCode = 400;
+                res.setHeader('Content-Type', 'text/plain');
+                res.end('Invalid JSON');
+                return;
+            }
+            const result = await importStoryFromExport(slug, payload, serverConfig);
+            sendResponse(res, result);
+            return;
+        }
+
+        if (method !== 'GET') {
+            res.statusCode = 405;
+            res.setHeader('Content-Type', 'text/plain');
+            res.end('Method not allowed');
+            return;
+        }
+
         if (parts.length === 2) {
             const result = await serveStoryIndex(slug, serverConfig);
             sendResponse(res, result);

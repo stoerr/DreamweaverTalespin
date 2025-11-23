@@ -223,6 +223,14 @@ function buildMissing() {
     return {statusCode: 404, headers: {'Content-Type': 'text/plain'}, body: 'Not found'};
 }
 
+function buildConflict(msg) {
+    return {statusCode: 409, headers: {'Content-Type': 'text/plain'}, body: msg || 'Conflict'};
+}
+
+function buildCreated(body) {
+    return {statusCode: 201, headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body || {status: 'created'})};
+}
+
 function normalizeStoryConfig(raw, serverConfig) {
     const config = raw || {};
     return {
@@ -954,6 +962,7 @@ function buildIndexHtml(slug, config, outline, hasCover) {
     return '<!doctype html><html lang="en"><head>' +
         '<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">' +
         '<title>Story: ' + xmlEscape(config.title || slug) + '</title>' +
+        '<link rel="alternate" type="application/rss+xml" title="RSS feed for ' + xmlEscape(config.title || slug) + '" href="/stories/' + safeSlug + '/feed.rss">' +
         '<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">' +
         '<style>body{background:linear-gradient(135deg,#fdfbfb 0%,#ebedee 100%);} .card-soft{border:0;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,0.08);} .btn-pastel{background-color:#dbeafe;color:#1e3a8a;border:0;} .btn-pastel:hover{background-color:#bfdbfe;color:#1e3a8a;} </style>' +
         '</head><body>' +
@@ -965,10 +974,10 @@ function buildIndexHtml(slug, config, outline, hasCover) {
         '<p class="text-muted mb-1"><strong>Language:</strong> ' + language + '</p>' +
         '<p class="text-muted"><strong>Story idea:</strong> ' + storyIdea + '</p>' +
         '<div class="d-flex gap-2 flex-wrap mt-2">' +
-        '<a class="btn btn-pastel" href="/stories/' + safeSlug + '/outline.json">Outline JSON</a>' +
-        '<a class="btn btn-pastel" href="/stories/' + safeSlug + '/feed.rss">Feed</a>' +
-        '<a class="btn btn-pastel" href="/stories/' + safeSlug + '/audio/' + safeSlug + '.m3u">Playlist (m3u)</a>' +
-        '<a class="btn btn-pastel" href="/stories/' + safeSlug + '/audio/' + safeSlug + '.zip">Download all (zip)</a>' +
+        '<a class="btn btn-pastel" target="_blank" href="/stories/' + safeSlug + '/outline.json">Outline JSON</a>' +
+        '<a class="btn btn-pastel" target="_blank" href="/stories/' + safeSlug + '/feed.rss">Feed</a>' +
+        '<a class="btn btn-pastel" target="_blank" href="/stories/' + safeSlug + '/audio/' + safeSlug + '.m3u">Playlist (m3u)</a>' +
+        '<a class="btn btn-pastel" target="_blank" href="/stories/' + safeSlug + '/audio/' + safeSlug + '.zip">Download all (zip)</a>' +
         '</div>' +
         '<div class="clearfix"></div>' +
         '</div>' +
@@ -1139,6 +1148,69 @@ async function serveStoryList(serverConfig) {
     return buildHtmlResponse(html);
 }
 
+async function importStoryFromExport(slug, payload, serverConfig) {
+    if (!payload || typeof payload !== 'object') return {statusCode: 400, headers: {'Content-Type': 'text/plain'}, body: 'Invalid payload'};
+    if (payload.version !== 1) return {statusCode: 400, headers: {'Content-Type': 'text/plain'}, body: 'Unsupported version'};
+
+    const baseDir = serverConfig.storiesDir || STORIES_DIR;
+    const paths = pathForStory(baseDir, slug);
+    const configExists = await fileExists(paths.config);
+    if (configExists) return buildConflict('Story already exists');
+
+    const settings = payload.settings || {};
+    const state = payload.storyState || {};
+
+    const outline = {
+        title: state.storyTitle || settings.storyTitle || slug,
+        subtitle: state.storySubtitle || '',
+        description: state.storyDescription || '',
+        characters: state.storyCharacters || [],
+        chapters: (state.outline || []).map(function (ch, idx) {
+            return {
+                chaptertitle: ch.title || ('Chapter ' + (idx + 1)),
+                chaptershortdescription: ch.description || '',
+                chapterdetails: ch.details || '',
+                chapterText: ch.chapterText || null
+            };
+        })
+    };
+
+    const config = {
+        title: outline.title,
+        language: settings.language || null,
+        storyIdea: settings.storyPrompt || '',
+        model: settings.model || serverConfig.chatModel || DEFAULT_CHAT_MODEL,
+        temperature: settings.temperature !== undefined ? settings.temperature : (serverConfig.temperature !== undefined ? serverConfig.temperature : DEFAULT_TEMPERATURE),
+        outlinePrompt: settings.outlineSystemPrompt || serverConfig.outlinePrompt || DEFAULT_OUTLINE_PROMPT,
+        chapterPrompt: settings.chapterSystemPrompt || serverConfig.chapterPrompt || DEFAULT_CHAPTER_PROMPT,
+        ttsModel: settings.openaiTTSModel || serverConfig.ttsModel || DEFAULT_TTS_MODEL,
+        voice: settings.openaiVoice || serverConfig.voice || DEFAULT_VOICE,
+        ttsInstructions: settings.openaiInstructions || ''
+    };
+
+    try {
+        await ensureDir(paths.base);
+        await ensureDir(paths.chaptersDir);
+        await writeFileAtomic(paths.config, JSON.stringify(config, null, 2), 'utf8');
+        await writeFileAtomic(paths.outline, JSON.stringify(outline, null, 2), 'utf8');
+
+        // write any provided chapter texts to markdown files
+        for (var i = 0; i < outline.chapters.length; i++) {
+            const chapterText = outline.chapters[i].chapterText;
+            if (chapterText) {
+                const title = outline.chapters[i].chaptertitle || ('Chapter ' + (i + 1));
+                const md = chapterMarkdown(title, chapterText, outline.chapters[i].chaptershortdescription);
+                await writeFileAtomic(paths.chapterFile(i + 1), md, 'utf8');
+            }
+        }
+        logInfo('Imported story ' + slug + ' via export payload');
+        return buildCreated({status: 'created', slug: slug});
+    } catch (e) {
+        logError('Failed importing story ' + slug, e);
+        return {statusCode: 500, headers: {'Content-Type': 'text/plain'}, body: 'Failed to import story'};
+    }
+}
+
 module.exports = {
     serveOutline,
     serveChapterMarkdown,
@@ -1150,5 +1222,6 @@ module.exports = {
     serveStoryIndex,
     serveChapterHtml,
     serveStoryList,
+    importStoryFromExport,
     STORIES_DIR
 };

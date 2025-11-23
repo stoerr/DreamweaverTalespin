@@ -24,10 +24,10 @@ the server is started in that defines port and the OpenAI models to use.
 
 Base directory: stories/.
 
-Each story: stories/<slug>/
+Each story: stories/{slug}/
 
 Required files and directories:
-• stories/<slug>/config.json
+• stories/{slug}/config.json
 • Input configuration for the story.
 • Contains at least:
 • title (string)
@@ -36,34 +36,41 @@ Required files and directories:
 •    (Optional) model / temperature settings for text generation
 •    (Optional) ttsModel / voice / ttsInstructions settings for audio generation
 • Lazily created, never regenerated:
-• stories/<slug>/outline.json
-• stories/<slug>/chapters/NNN.md (chapter N, zero-padded)
-• stories/<slug>/audio/NNN.mp3
-• stories/<slug>/audio/<slug>.m3u (playlist with relative links to all mp3 files)
-• stories/<slug>/audio/<slug>.zip (zip with all mp3s, generated via external zip)
-• stories/<slug>/feed.rss
-• stories/<slug>/cover.jpg (generated cover art from story idea)
+• stories/{slug}/outline.json
+• stories/{slug}/chapters/NNN.md (chapter N, zero-padded)
+• stories/{slug}/audio/NNN.mp3
+• stories/{slug}/audio/{slug}.m3u (playlist with relative links to all mp3 files)
+• stories/{slug}/audio/{slug}.zip (zip with all mp3s, generated via external zip)
+• stories/{slug}/feed.rss
+• stories/{slug}/cover.jpg (generated cover art from story idea)
 
-<slug> is a short, URL-safe identifier, derived from the title when the story is created and kept stable.
+{slug} is a short, URL-safe identifier, derived from the title when the story is created and kept stable.
 
 ⸻
 
 2. HTTP API
 
-All endpoints are under /stories/<slug>/….
+All endpoints are under /stories/{slug}/….
+
+2.0 Import story (server-side creation)
+• POST /stories/{slug} with JSON body (version 1 export)
+    • Creates stories/{slug}/config.json and outline.json from the provided export payload. Writes provided chapter texts to chapters/NNN.md when present.
+    • 201 Created on success.
+    • 400 Bad Request on invalid JSON/unsupported version.
+    • 409 Conflict if story already exists.
 
 2.0 Global story index
 • GET /storyindex.html (or /storyindex)
-    • 200 OK + text/html: lists all stories discovered under stories/<slug>/ that contain a config.json, showing title, language, story idea, and whether the outline exists. Links into each /stories/<slug>/index.html.
+    • 200 OK + text/html: lists all stories discovered under stories/{slug}/ that contain a config.json, showing title, language, story idea, and whether the outline exists. Links into each /stories/{slug}/index.html.
 
 2.0 Story landing page
-• GET /stories/<slug>/ (or /stories/<slug>/index.html)
+• GET /stories/{slug}/ (or /stories/{slug}/index.html)
     • 200 OK + text/html: Generated summary page rendered with Bootstrap (via CDN) in a light pastel style.
     • Shows config.json data, outline (if present), character list, and links to outline.json, feed.rss, and every chapter’s Markdown/HTML/audio paths (even if not yet generated).
-    • Includes a “Generate outline” button that calls /stories/<slug>/outline.json; while 202 is returned it polls, and reloads the page when the outline is ready.
+    • Includes a “Generate outline” button that calls /stories/{slug}/outline.json; while 202 is returned it polls, and reloads the page when the outline is ready.
 
 2.1 Outline
-• GET /stories/<slug>/outline.json
+• GET /stories/{slug}/outline.json
 
 Responses:
 • 200 OK + JSON body: outline.json content.
@@ -73,36 +80,36 @@ Responses:
 
 Outline generation is in progress; client should retry.
 
-	•	404 Not Found if <slug> or config.json is missing.
+	•	404 Not Found if {slug} or config.json is missing.
 
 2.2 Chapter text (Markdown)
-• GET /stories/<slug>/chapters/<n>.md
+• GET /stories/{slug}/chapters/{n}.md
 
-<n> is 1-based, non-padded; server maps to chapters/NNN.md.
+{n} is 1-based, non-padded; server maps to chapters/NNN.md.
 
 Responses:
 • 200 OK + text/markdown body: content of chapters/NNN.md.
 • 202 Accepted + JSON body:
 
-{ "status": "generating", "resource": "chapter", "chapter": <n> }
+{ "status": "generating", "resource": "chapter", "chapter": {n} }
 
 Some required chapters are being generated; client should retry.
 
-	•	404 Not Found if <slug> or requested chapter index is outside the outline.
+	•	404 Not Found if {slug} or requested chapter index is outside the outline.
 
 2.3 Chapter audio
-• GET /stories/<slug>/chapters/<n>.mp3
+• GET /stories/{slug}/chapters/{n}.mp3
 
 Responses:
 • 200 OK + audio/mpeg body: audio/NNN.mp3.
 • 202 Accepted + JSON body:
 
-{ "status": "generating", "resource": "audio", "chapter": <n> }
+{ "status": "generating", "resource": "audio", "chapter": {n} }
 
-	•	404 Not Found if <slug> or chapter index invalid.
+	•	404 Not Found if {slug} or chapter index invalid.
 
 2.4 RSS feed
-• GET /stories/<slug>/feed.rss
+• GET /stories/{slug}/feed.rss
 
 Responses:
 • 200 OK + application/rss+xml body.
@@ -110,39 +117,39 @@ Responses:
 
 { "status": "generating", "resource": "feed" }
 
-	•	404 Not Found if <slug> or config.json missing.
+	•	404 Not Found if {slug} or config.json missing.
 
 2.5 Chapter HTML view
-• GET /stories/<slug>/chapters/<n>.html
+• GET /stories/{slug}/chapters/{n}.html
 
 Responses:
 • 200 OK + text/html body: page that fetches and renders the Markdown via a CDN markdown renderer (e.g., marked), styled with Bootstrap.
 • 202 Accepted is never returned directly; polling happens client-side when the backing .md returns 202.
-• Page shows navigation links to previous/next chapter when known (from outline.json) and back to /stories/<slug>/index.html.
+• Page shows navigation links to previous/next chapter when known (from outline.json) and back to /stories/{slug}/index.html.
 
 2.6 Audio playlist
-• GET /stories/<slug>/audio/<slug>.m3u
+• GET /stories/{slug}/audio/{slug}.m3u
 
 Responses:
 • 200 OK + audio/x-mpegurl: M3U playlist with relative entries for every chapter mp3 (e.g., 001.mp3). Includes #EXTM3U and #EXTINF lines with chapter titles when available.
 • 202 Accepted if outline generation is in progress.
-• 404 Not Found if <slug> or config.json missing.
+• 404 Not Found if {slug} or config.json missing.
 
 2.7 Audio archive
-• GET /stories/<slug>/audio/<slug>.zip
+• GET /stories/{slug}/audio/{slug}.zip
 
 Responses:
 • 200 OK + application/zip: zip containing all chapter mp3 files (names as 001.mp3, 002.mp3, …).
 • 202 Accepted if outline generation or audio generation is in progress.
-• 404 Not Found if <slug> or config.json missing.
+• 404 Not Found if {slug} or config.json missing.
 
 2.8 Cover image
-• GET /stories/<slug>/cover.jpg
+• GET /stories/{slug}/cover.jpg
 
 Responses:
 • 200 OK + image/jpeg: generated cover art based on the story idea (model gpt-image-1).
 • 202 Accepted if generation is in progress.
-• 404 Not Found if <slug> or config.json missing.
+• 404 Not Found if {slug} or config.json missing.
 
 ⸻
 
@@ -167,11 +174,11 @@ On any request requiring the outline:
 
 3.2 Chapters (chapters/NNN.md)
 
-On GET /chapters/<n>.md:
+On GET /chapters/{n}.md:
 
 1. Ensure outline exists per 3.1; if outline is being generated, return 202.
-2. Load outline.json and check that chapter <n> exists; else 404.
-3. For each i from 1 to <n>:
+2. Load outline.json and check that chapter {n} exists; else 404.
+3. For each i from 1 to {n}:
    • If chapters/NNN.md exists: skip.
    • Else:
        • Try to acquire an in-memory generation lock for that chapter.
@@ -188,7 +195,7 @@ Thus, requesting chapter n may generate chapters 1..n.
 
 3.3 Audio (audio/NNN.mp3)
 
-On GET /chapters/<n>.mp3:
+On GET /chapters/{n}.mp3:
 
 1. Ensure chapters/NNN.md exists via 3.2; if chapters are in progress, return 202.
 2. If audio/NNN.mp3 exists: return 200.
@@ -206,10 +213,10 @@ On GET /chapters/<n>.mp3:
 5. Optimization: after serving audio for chapter n, the server may start generating audio for chapter n+1 in the background (after ensuring chapter n+1 exists).
 
 Zip archive
-• When /stories/<slug>/audio/<slug>.zip is requested, the server ensures outline, all chapters, and all mp3 files exist, then runs the system “zip” command to package the mp3s (no regeneration if the zip already exists).
+• When /stories/{slug}/audio/{slug}.zip is requested, the server ensures outline, all chapters, and all mp3 files exist, then runs the system “zip” command to package the mp3s (no regeneration if the zip already exists).
 
 Cover art
-• Generated once per story (cover.jpg) using model gpt-image-1 and the story idea as prompt; reused in the story index, MP3 metadata, and available via /stories/<slug>/cover.jpg.
+• Generated once per story (cover.jpg) using model gpt-image-1 and the story idea as prompt; reused in the story index, MP3 metadata, and available via /stories/{slug}/cover.jpg.
 
 3.4 RSS (feed.rss)
 
@@ -227,7 +234,7 @@ On GET /feed.rss:
            • <item> per chapter, with:
              • Title = chapter title.
              • Description = short or detailed description.
-             • Link(s) to /stories/<slug>/chapters/<n>.mp3 or <n>.md.
+             • Link(s) to /stories/{slug}/chapters/{n}.mp3 or {n}.md.
        • Write feed.tmp, then rename to feed.rss.
        • Release the in-memory lock.
 4. Return 200 with feed.rss.
@@ -257,7 +264,7 @@ New story variants should be created under new slugs.
 ⸻
 
 Short summary
-• Each story lives under stories/<slug>/ and is defined by config.json.
+• Each story lives under stories/{slug}/ and is defined by config.json.
 • Outline, chapters (.md), audio (.mp3), and RSS are lazily materialized, never regenerated.
 • HTTP endpoints return 200 with content when ready, 202 with a JSON “generating” status while a lock is held, and
 404/409 for missing or invalid resources.
