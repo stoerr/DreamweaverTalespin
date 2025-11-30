@@ -22,7 +22,8 @@ function loadServerConfig() {
         ttsModel: 'tts-1-hd',
         voice: 'alloy',
         serviceTier: null,
-        importToken: null
+        importToken: null,
+        baseUrl: null
     };
 
     const confFile = path.resolve(process.cwd(), 'server.conf');

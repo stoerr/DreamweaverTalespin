@@ -35,6 +35,7 @@ Required files and directories:
 • storyIdea (string)
 •    (Optional) model / temperature settings for text generation
 •    (Optional) ttsModel / voice / ttsInstructions settings for audio generation
+•    (Required) port (listening port) and optional baseUrl (used to build absolute URLs in RSS)
 • Lazily created, never regenerated:
 • stories/{slug}/outline.json
 • stories/{slug}/chapters/NNN.md (chapter N, zero-padded)
@@ -234,7 +235,7 @@ On GET /feed.rss:
            • <item> per chapter, with:
              • Title = chapter title.
              • Description = short or detailed description.
-             • Link(s) to /stories/{slug}/chapters/{n}.mp3 or {n}.md.
+             • Link(s) to /stories/{slug}/chapters/{n}.mp3 or {n}.md, rendered as full URLs using the server base URL (server.conf url=...).
        • Write feed.tmp, then rename to feed.rss.
        • Release the in-memory lock.
 4. Return 200 with feed.rss.

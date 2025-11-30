@@ -393,40 +393,60 @@ function xmlEscape(str) {
     return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function buildFeed(slug, outline) {
+function buildFeed(slug, outline, baseUrl, enclosureLengths) {
     const title = outline.title || ('Story ' + slug);
     const description = outline.description || outline.subtitle || outline.storyIdea || '';
-    let items = '';
-    for (var i = 0; i < outline.chapters.length; i++) {
+    const base = (baseUrl || '').replace(/\/+$/, '');
+    const feedLink = base + '/stories/' + slug + '/feed.rss';
+    const items = outline.chapters.map(function (chapter, i) {
         const idx = i + 1;
         const padded = String(idx).padStart(3, '0');
-        const chapter = outline.chapters[i];
         const chTitle = chapter.chaptertitle || chapter.title || ('Chapter ' + idx);
         const desc = chapter.chaptershortdescription || chapter.chapterdetails || '';
-        const mdLink = '/stories/' + slug + '/chapters/' + idx + '.md';
-        const audioLink = '/stories/' + slug + '/chapters/' + padded + '.mp3';
-        items += '<item>';
-        items += '<title>' + xmlEscape(chTitle) + '</title>';
-        items += '<description><![CDATA[' + (desc || '') + ']]></description>';
-        items += '<link>' + xmlEscape(audioLink) + '</link>';
-        items += '<guid isPermaLink="false">' + xmlEscape(slug + '-chapter-' + idx) + '</guid>';
-        items += '<enclosure url="' + xmlEscape(audioLink) + '" type="audio/mpeg" />';
-        items += '<comments>' + xmlEscape(mdLink) + '</comments>';
-        items += '</item>';
-    }
+        const mdLink = base + '/stories/' + slug + '/chapters/' + idx + '.md';
+        const audioLink = base + '/stories/' + slug + '/chapters/' + padded + '.mp3';
+        const length = enclosureLengths && enclosureLengths[i] ? enclosureLengths[i] : 0;
+        return [
+            '  <item>',
+            '    <title>' + xmlEscape(chTitle) + '</title>',
+            '    <description><![CDATA[' + (desc || '') + ']]></description>',
+            '    <link>' + xmlEscape(audioLink) + '</link>',
+            '    <guid isPermaLink="false">' + xmlEscape(slug + '-chapter-' + idx) + '</guid>',
+            '    <enclosure url="' + xmlEscape(audioLink) + '" length="' + String(length) + '" type="audio/mpeg" />',
+            '    <comments>' + xmlEscape(mdLink) + '</comments>',
+            '  </item>'
+        ].join('\n');
+    }).join('\n');
 
-    const rss =
-        '<?xml version="1.0" encoding="UTF-8"?>' +
-        '<rss version="2.0">' +
-        '<channel>' +
-        '<title>' + xmlEscape(title) + '</title>' +
-        '<description>' + xmlEscape(description) + '</description>' +
-        '<link>/stories/' + xmlEscape(slug) + '/feed.rss</link>' +
-        '<language>' + xmlEscape(outline.language || '') + '</language>' +
-        items +
-        '</channel>' +
-        '</rss>';
-    return rss;
+    return [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">',
+        '<channel>',
+        '  <title>' + xmlEscape(title) + '</title>',
+        '  <description>' + xmlEscape(description) + '</description>',
+        '  <link>' + xmlEscape(feedLink) + '</link>',
+        '  <atom:link href="' + xmlEscape(feedLink) + '" rel="self" type="application/rss+xml" />',
+        '  <language>' + xmlEscape(outline.language || '') + '</language>',
+        items,
+        '</channel>',
+        '</rss>',
+        ''
+    ].join('\n');
+}
+
+async function collectEnclosureLengths(outline, paths) {
+    const lengths = [];
+    if (!outline || !outline.chapters) return lengths;
+    for (var i = 0; i < outline.chapters.length; i++) {
+        const audioPath = paths.audioFile(i + 1);
+        try {
+            const stat = await fs.promises.stat(audioPath);
+            lengths.push(stat.size);
+        } catch (e) {
+            lengths.push(0);
+        }
+    }
+    return lengths;
 }
 
 function chunkTextForTts(text, limit) {
@@ -500,7 +520,7 @@ async function ensureOutline(slug, paths, storyConfig) {
         const body = JSON.stringify(generated, null, 2);
         await writeFileAtomic(paths.outline, body, 'utf8');
         setImmediate(function () {
-            ensureCover(slug, paths, storyConfig).catch(function (e) {
+            ensureCover(slug, paths, storyConfig, generated).catch(function (e) {
                 logError('Background cover generation failed for story ' + slug, e);
             });
         });
@@ -599,7 +619,7 @@ async function ensureAudio(index, slug, paths, storyConfig) {
     }
 }
 
-async function ensureFeed(slug, paths, outline) {
+async function ensureFeed(slug, paths, outline, baseUrl) {
     const exists = await fileExists(paths.feed);
     if (exists) {
         const text = await fs.promises.readFile(paths.feed, 'utf8');
@@ -612,7 +632,8 @@ async function ensureFeed(slug, paths, outline) {
 
     try {
         logInfo('Generating feed for story ' + slug);
-        const feed = buildFeed(slug, outline);
+        const enclosureLengths = await collectEnclosureLengths(outline, paths);
+        const feed = buildFeed(slug, outline, baseUrl, enclosureLengths);
         await writeFileAtomic(paths.feed, feed, 'utf8');
         logInfo('Finished feed for story ' + slug);
         return {status: 'ready', text: feed};
@@ -795,7 +816,7 @@ async function ensureZip(slug, paths, outline, storyConfig) {
     }
 }
 
-async function ensureCover(slug, paths, storyConfig) {
+async function ensureCover(slug, paths, storyConfig, outline) {
     const exists = await fileExists(paths.cover);
     if (exists) return {status: 'ready', path: paths.cover};
     const key = 'cover:' + slug;
@@ -803,7 +824,14 @@ async function ensureCover(slug, paths, storyConfig) {
     if (!locked) return {status: 'pending'};
     try {
         await ensureDir(paths.base);
-        const prompt = 'Book cover art, warm pastel colors, gentle illustration. Story idea: ' + storyConfig.storyIdea;
+        if (!outline) throw new Error('Outline required for cover generation');
+        const meta = [
+            'Title: ' + (outline.title || storyConfig.title || slug),
+            'Subtitle: ' + (outline.subtitle || ''),
+            'Description: ' + (outline.description || ''),
+            'Story idea: ' + (storyConfig.storyIdea || '')
+        ].join('\n');
+        const prompt = 'Book cover art, warm pastel colors, gentle illustration. Use the following story info:\n' + meta;
         logInfo('Generating cover for story ' + slug);
         const img = await generateImage(prompt, {model: 'dall-e-3', size: '1024x1024'});
         await writeFileAtomic(paths.cover, img);
@@ -856,7 +884,8 @@ async function serveCoverImage(slug, serverConfig) {
     const storyConfig = normalizeStoryConfig(storyConfRaw, serverConfig);
     storyConfig.slug = slug;
     storyConfig.storiesDir = baseDir;
-    const coverRes = await ensureCover(slug, paths, storyConfig);
+    const outline = await loadOutline(paths);
+    const coverRes = await ensureCover(slug, paths, storyConfig, outline);
     if (coverRes.status === 'pending') return buildGenerating('cover');
     const buf = await fs.promises.readFile(paths.cover);
     return buildImageResponse(buf);
@@ -874,7 +903,7 @@ async function serveFeed(slug, serverConfig) {
     const outlineResult = await ensureOutline(slug, paths, storyConfig);
     if (outlineResult.status === 'pending') return buildGenerating('outline');
     const outline = outlineResult.outline;
-    const feedStatus = await ensureFeed(slug, paths, outline);
+    const feedStatus = await ensureFeed(slug, paths, outline, serverConfig.baseUrl || '');
     if (feedStatus.status === 'pending') return buildGenerating('feed');
     return buildFeedResponse(feedStatus.text);
 }
