@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-PID_FILE="$ROOT_DIR/logs/dreamweaver.pid"
+WORK_DIR="${PWD:-$(pwd)}"
+PID_FILE="$WORK_DIR/logs/dreamweaver.pid"
 
 if [ ! -f "$PID_FILE" ]; then
   echo "No PID file found at $PID_FILE."
