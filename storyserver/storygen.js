@@ -773,10 +773,6 @@ async function serveChapterAudio(slug, chapterIndex, serverConfig) {
 }
 
 async function ensureZip(slug, paths, outline, storyConfig) {
-    const zipFile = paths.zipFile;
-    const exists = await fileExists(zipFile);
-    if (exists) return {status: 'ready', buffer: await fs.promises.readFile(zipFile)};
-
     const key = 'zip:' + slug;
     const locked = acquireLock(key);
     if (!locked) return {status: 'pending'};
@@ -794,18 +790,24 @@ async function ensureZip(slug, paths, outline, storyConfig) {
         for (var j = 1; j <= total; j++) {
             audioFiles.push(paths.audioFile(j));
         }
-        const tmpZip = zipFile + '.tmp';
-        await new Promise(function (resolve, reject) {
-            const args = ['-j', tmpZip].concat(audioFiles);
+        const buffer = await new Promise(function (resolve, reject) {
+            const args = ['-j', '-', ...audioFiles];
             const proc = spawn('zip', args);
-            proc.on('exit', function (code) {
-                if (code === 0) resolve();
-                else reject(new Error('zip exited with code ' + code));
-            });
+            const chunks = [];
+            let stderr = '';
+
+            proc.stdout.on('data', function (data) { chunks.push(data); });
+            proc.stderr.on('data', function (data) { stderr += data.toString(); });
             proc.on('error', reject);
+            proc.on('close', function (code) {
+                if (code === 0) {
+                    resolve(Buffer.concat(chunks));
+                } else {
+                    const msg = stderr ? (' :: ' + stderr.trim()) : '';
+                    reject(new Error('zip exited with code ' + code + msg));
+                }
+            });
         });
-        await fs.promises.rename(tmpZip, zipFile);
-        const buffer = await fs.promises.readFile(zipFile);
         logInfo('Finished zip for story ' + slug);
         return {status: 'ready', buffer: buffer};
     } catch (e) {
