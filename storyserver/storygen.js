@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const {callChatCompletions, textToSpeech, generateImage} = require('./openai');
 const {spawn} = require('child_process');
+const {PassThrough} = require('stream');
 
 const DEFAULT_CHAT_MODEL = 'gpt-5.1';
 const DEFAULT_TEMPERATURE = 1;
@@ -169,11 +170,11 @@ function buildAudioResponse(buffer) {
     };
 }
 
-function buildZipResponse(buffer) {
+function buildZipResponse(stream) {
     return {
         statusCode: 200,
         headers: {'Content-Type': 'application/zip'},
-        body: buffer
+        bodyStream: stream
     };
 }
 
@@ -774,8 +775,11 @@ async function serveChapterAudio(slug, chapterIndex, serverConfig) {
 
 async function ensureZip(slug, paths, outline, storyConfig) {
     const key = 'zip:' + slug;
-    const locked = acquireLock(key);
-    if (!locked) return {status: 'pending'};
+    let locked = acquireLock(key);
+    while (!locked) {
+        await sleep(200);
+        locked = acquireLock(key);
+    }
 
     try {
         await ensureDir(paths.audioDir);
@@ -786,35 +790,43 @@ async function ensureZip(slug, paths, outline, storyConfig) {
             await ensureChaptersThrough(i, slug, paths, outline, storyConfig);
             await ensureAudio(i, slug, paths, storyConfig);
         }
-        const audioFiles = [];
-        for (var j = 1; j <= total; j++) {
-            audioFiles.push(paths.audioFile(j));
-        }
-        const buffer = await new Promise(function (resolve, reject) {
-            const args = ['-j', '-', ...audioFiles];
-            const proc = spawn('zip', args);
-            const chunks = [];
-            let stderr = '';
 
-            proc.stdout.on('data', function (data) { chunks.push(data); });
-            proc.stderr.on('data', function (data) { stderr += data.toString(); });
-            proc.on('error', reject);
-            proc.on('close', function (code) {
-                if (code === 0) {
-                    resolve(Buffer.concat(chunks));
-                } else {
-                    const msg = stderr ? (' :: ' + stderr.trim()) : '';
-                    reject(new Error('zip exited with code ' + code + msg));
-                }
-            });
+        let playlistStatus = await ensurePlaylist(slug, paths, outline);
+        while (playlistStatus.status === 'pending') {
+            await sleep(200);
+            playlistStatus = await ensurePlaylist(slug, paths, outline);
+        }
+
+        const filesToZip = [];
+        for (var j = 1; j <= total; j++) {
+            filesToZip.push(paths.audioFile(j));
+        }
+        filesToZip.push(paths.playlistFile);
+        const passthrough = new PassThrough();
+        const args = ['-j', '-', ...filesToZip];
+        const proc = spawn('zip', args);
+        let stderr = '';
+
+        proc.stdout.pipe(passthrough);
+        proc.stderr.on('data', function (data) { stderr += data.toString(); });
+        proc.on('error', function (err) {
+            passthrough.destroy(err);
+            releaseLock(key);
         });
-        logInfo('Finished zip for story ' + slug);
-        return {status: 'ready', buffer: buffer};
+        proc.on('close', function (code) {
+            if (code !== 0) {
+                const msg = stderr ? (' :: ' + stderr.trim()) : '';
+                passthrough.destroy(new Error('zip exited with code ' + code + msg));
+            }
+            logInfo('Finished zip for story ' + slug);
+            releaseLock(key);
+        });
+
+        return {status: 'ready', stream: passthrough};
     } catch (e) {
         logError('Failed creating zip for story ' + slug, e);
-        throw e;
-    } finally {
         releaseLock(key);
+        throw e;
     }
 }
 
@@ -875,7 +887,7 @@ async function serveZip(slug, serverConfig) {
     const outline = outlineResult.outline;
     const zipStatus = await ensureZip(slug, paths, outline, storyConfig);
     if (zipStatus.status === 'pending') return buildGenerating('zip');
-    return buildZipResponse(zipStatus.buffer);
+    return buildZipResponse(zipStatus.stream);
 }
 
 async function serveCoverImage(slug, serverConfig) {

@@ -7,6 +7,19 @@ function sendResponse(res, result) {
             res.setHeader(key, result.headers[key]);
         });
     }
+    if (result.bodyStream) {
+        result.bodyStream.on('error', function (err) {
+            if (res.headersSent) {
+                res.destroy(err);
+            } else {
+                res.statusCode = 500;
+                res.setHeader('Content-Type', 'text/plain');
+                res.end('Internal server error');
+            }
+        });
+        result.bodyStream.pipe(res);
+        return;
+    }
     if (result.body !== undefined) res.end(result.body);
     else res.end();
 }

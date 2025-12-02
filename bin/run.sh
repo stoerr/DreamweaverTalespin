@@ -16,4 +16,4 @@ LOG_FILE="$LOG_DIR/dreamweaver.log"
 mkdir -p "$LOG_DIR"
 
 # Keep the caller's working directory so server.conf is read from there.
-node "$ROOT_DIR/storyserver/server.js" "$@" >>"$LOG_FILE" 2>&1
+exec node "$ROOT_DIR/storyserver/server.js" "$@" >>"$LOG_FILE" 2>&1

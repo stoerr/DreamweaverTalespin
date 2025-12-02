@@ -17,6 +17,11 @@ LOG_FILE="$LOG_DIR/dreamweaver.log"
 
 mkdir -p "$LOG_DIR"
 
+# Stop any instance tracked in the current directory before starting anew.
+if [ -x "$WORK_DIR/stop.sh" ]; then
+  (cd "$WORK_DIR" && ./stop.sh >/dev/null 2>&1 || true)
+fi
+
 if [ -f "$PID_FILE" ] && ps -p "$(cat "$PID_FILE")" > /dev/null 2>&1; then
   echo "Server already running with PID $(cat "$PID_FILE")."
   exit 0
