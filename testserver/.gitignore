@@ -3,6 +3,9 @@ stories/*/outline.json
 stories/*/feed.rss
 stories/*/outline.tmp
 stories/*/feed.tmp
+stories/*/*.epub
+stories/*/epub
+
 
 # Chapter text and locks
 stories/*/chapters/*.md

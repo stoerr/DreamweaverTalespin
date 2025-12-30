@@ -1,4 +1,4 @@
-const {serveOutline, serveChapterMarkdown, serveChapterAudio, serveFeed, serveStoryIndex, serveChapterHtml, serveStoryList, servePlaylist, serveZip, serveCoverImage, importStoryFromExport} = require('./storygen');
+const {serveOutline, serveChapterMarkdown, serveChapterAudio, serveFeed, serveStoryIndex, serveChapterHtml, serveStoryList, servePlaylist, serveZip, serveEpub, serveCoverImage, importStoryFromExport} = require('./storygen');
 
 function sendResponse(res, result) {
     res.statusCode = result.statusCode;
@@ -144,6 +144,11 @@ async function handleRequest(req, res, serverConfig) {
         }
         if (parts[2] === 'audio' && parts.length === 4 && parts[3] === slug + '.zip') {
             const result = await serveZip(slug, serverConfig);
+            sendResponse(res, result);
+            return;
+        }
+        if (parts[2] === slug + '.epub' && parts.length === 3) {
+            const result = await serveEpub(slug, serverConfig);
             sendResponse(res, result);
             return;
         }

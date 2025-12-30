@@ -100,6 +100,7 @@ function pathForStory(baseDir, slug) {
     const storyDir = path.join(baseDir, slug);
     const chaptersDir = path.join(storyDir, 'chapters');
     const audioDir = path.join(storyDir, 'audio');
+    const epubDir = path.join(storyDir, 'epub');
     return {
         base: storyDir,
         config: path.join(storyDir, 'config.json'),
@@ -108,6 +109,7 @@ function pathForStory(baseDir, slug) {
         cover: path.join(storyDir, 'cover.jpg'),
         chaptersDir: chaptersDir,
         audioDir: audioDir,
+        epubDir: epubDir,
         chapterFile: function (index) {
             const name = String(index).padStart(3, '0') + '.md';
             return path.join(chaptersDir, name);
@@ -117,7 +119,8 @@ function pathForStory(baseDir, slug) {
             return path.join(audioDir, name);
         },
         zipFile: path.join(audioDir, slug + '.zip'),
-        playlistFile: path.join(audioDir, slug + '.m3u')
+        playlistFile: path.join(audioDir, slug + '.m3u'),
+        epubFile: path.join(storyDir, slug + '.epub')
     };
 }
 
@@ -174,6 +177,14 @@ function buildZipResponse(stream) {
     return {
         statusCode: 200,
         headers: {'Content-Type': 'application/zip'},
+        bodyStream: stream
+    };
+}
+
+function buildEpubResponse(stream) {
+    return {
+        statusCode: 200,
+        headers: {'Content-Type': 'application/epub+zip'},
         bodyStream: stream
     };
 }
@@ -388,6 +399,52 @@ function chapterMarkdown(title, body, shortDescription) {
     var header = '# ' + title;
     if (shortDescription) header += '\n\n' + shortDescription;
     return header + '\n\n' + body + '\n';
+}
+
+function stripLeadingMarkdownTitle(markdown) {
+    const lines = (markdown || '').replace(/\r\n/g, '\n').split('\n');
+    let idx = 0;
+    while (idx < lines.length && !lines[idx].trim()) idx++;
+    if (idx < lines.length && /^#\s+/.test(lines[idx])) {
+        idx++;
+        while (idx < lines.length && !lines[idx].trim()) idx++;
+        return lines.slice(idx).join('\n');
+    }
+    return lines.join('\n');
+}
+
+function markdownToXhtmlBody(markdown) {
+    const lines = (markdown || '').replace(/\r\n/g, '\n').split('\n');
+    const blocks = [];
+    let para = [];
+    function flushPara() {
+        if (!para.length) return;
+        blocks.push('<p>' + xmlEscape(para.join(' ').trim()) + '</p>');
+        para = [];
+    }
+    for (var i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmed = line.trim();
+        if (!trimmed) {
+            flushPara();
+            continue;
+        }
+        const h1 = trimmed.match(/^#\s+(.+)$/);
+        const h2 = trimmed.match(/^##\s+(.+)$/);
+        if (h1) {
+            flushPara();
+            blocks.push('<h1>' + xmlEscape(h1[1].trim()) + '</h1>');
+            continue;
+        }
+        if (h2) {
+            flushPara();
+            blocks.push('<h2>' + xmlEscape(h2[1].trim()) + '</h2>');
+            continue;
+        }
+        para.push(trimmed);
+    }
+    flushPara();
+    return blocks.join('\n');
 }
 
 function xmlEscape(str) {
@@ -830,6 +887,239 @@ async function ensureZip(slug, paths, outline, storyConfig) {
     }
 }
 
+function runZip(args, cwd) {
+    return new Promise(function (resolve, reject) {
+        const proc = spawn('zip', args, cwd ? {cwd: cwd} : undefined);
+        let stderr = '';
+        proc.stderr.on('data', function (data) { stderr += data.toString(); });
+        proc.on('error', reject);
+        proc.on('close', function (code) {
+            if (code !== 0) {
+                const msg = stderr ? (' :: ' + stderr.trim()) : '';
+                reject(new Error('zip exited with code ' + code + msg));
+                return;
+            }
+            resolve();
+        });
+    });
+}
+
+function buildEpubXhtml(title, lang, bodyHtml) {
+    const safeLang = (lang || 'en').split(/[_-]/)[0] || 'en';
+    return [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<!DOCTYPE html>',
+        '<html xmlns="http://www.w3.org/1999/xhtml" lang="' + xmlEscape(safeLang) + '" xml:lang="' + xmlEscape(safeLang) + '">',
+        '<head>',
+        '  <meta charset="utf-8" />',
+        '  <title>' + xmlEscape(title || '') + '</title>',
+        '  <link rel="stylesheet" type="text/css" href="../styles.css" />',
+        '</head>',
+        '<body>',
+        bodyHtml,
+        '</body>',
+        '</html>',
+        ''
+    ].join('\n');
+}
+
+function buildEpubNav(outline) {
+    const safeTitle = xmlEscape(outline.title || 'Story');
+    const items = (outline.chapters || []).map(function (ch, idx) {
+        const i = idx + 1;
+        const padded = String(i).padStart(3, '0');
+        const title = ch.chaptertitle || ch.title || ('Chapter ' + i);
+        return '      <li><a href="chapters/chapter-' + padded + '.xhtml">' + xmlEscape(title) + '</a></li>';
+    }).join('\n');
+    return [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<!DOCTYPE html>',
+        '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">',
+        '<head>',
+        '  <meta charset="utf-8" />',
+        '  <title>' + safeTitle + '</title>',
+        '</head>',
+        '<body>',
+        '  <nav epub:type="toc" id="toc">',
+        '    <h1>' + safeTitle + '</h1>',
+        '    <ol>',
+        items,
+        '    </ol>',
+        '  </nav>',
+        '</body>',
+        '</html>',
+        ''
+    ].join('\n');
+}
+
+function buildEpubNcx(identifier, outline) {
+    const safeTitle = xmlEscape(outline.title || 'Story');
+    const navPoints = (outline.chapters || []).map(function (ch, idx) {
+        const i = idx + 1;
+        const padded = String(i).padStart(3, '0');
+        const title = ch.chaptertitle || ch.title || ('Chapter ' + i);
+        return [
+            '  <navPoint id="navPoint-' + i + '" playOrder="' + i + '">',
+            '    <navLabel><text>' + xmlEscape(title) + '</text></navLabel>',
+            '    <content src="chapters/chapter-' + padded + '.xhtml" />',
+            '  </navPoint>'
+        ].join('\n');
+    }).join('\n');
+    return [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">',
+        '<head>',
+        '  <meta name="dtb:uid" content="' + xmlEscape(identifier) + '" />',
+        '  <meta name="dtb:depth" content="1" />',
+        '  <meta name="dtb:totalPageCount" content="0" />',
+        '  <meta name="dtb:maxPageNumber" content="0" />',
+        '</head>',
+        '<docTitle><text>' + safeTitle + '</text></docTitle>',
+        '<navMap>',
+        navPoints,
+        '</navMap>',
+        '</ncx>',
+        ''
+    ].join('\n');
+}
+
+function buildEpubOpf(identifier, outline, storyConfig, hasCover) {
+    const title = outline.title || storyConfig.title || 'Story';
+    const author = storyConfig.author || '';
+    const lang = (storyConfig.language || 'en').split(/[_-]/)[0] || 'en';
+    const description = outline.description || outline.subtitle || '';
+    const modified = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+    const chapterItems = (outline.chapters || []).map(function (ch, idx) {
+        const i = idx + 1;
+        const padded = String(i).padStart(3, '0');
+        return '    <item id="ch' + i + '" href="chapters/chapter-' + padded + '.xhtml" media-type="application/xhtml+xml" />';
+    }).join('\n');
+    const spineItems = (outline.chapters || []).map(function (ch, idx) {
+        const i = idx + 1;
+        return '    <itemref idref="ch' + i + '" />';
+    }).join('\n');
+    const coverItem = hasCover ? '    <item id="cover-image" href="images/cover.jpg" media-type="image/jpeg" properties="cover-image" />' : '';
+    return [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="bookid" version="3.0" xml:lang="' + xmlEscape(lang) + '">',
+        '  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">',
+        '    <dc:identifier id="bookid">' + xmlEscape(identifier) + '</dc:identifier>',
+        '    <dc:title>' + xmlEscape(title) + '</dc:title>',
+        '    <dc:language>' + xmlEscape(lang) + '</dc:language>',
+        (author ? '    <dc:creator>' + xmlEscape(author) + '</dc:creator>' : ''),
+        (description ? '    <dc:description>' + xmlEscape(description) + '</dc:description>' : ''),
+        '    <meta property="dcterms:modified">' + xmlEscape(modified) + '</meta>',
+        '  </metadata>',
+        '  <manifest>',
+        '    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav" />',
+        '    <item id="toc" href="toc.ncx" media-type="application/x-dtbncx+xml" />',
+        '    <item id="css" href="styles.css" media-type="text/css" />',
+        coverItem,
+        chapterItems,
+        '  </manifest>',
+        '  <spine toc="toc">',
+        spineItems,
+        '  </spine>',
+        '</package>',
+        ''
+    ].filter(function (line) { return line !== ''; }).join('\n');
+}
+
+async function ensureEpub(slug, paths, outline, storyConfig) {
+    const key = 'epub:' + slug;
+    let locked = acquireLock(key);
+    while (!locked) {
+        await sleep(200);
+        locked = acquireLock(key);
+    }
+
+    try {
+        await ensureDir(paths.base);
+        await fs.promises.rm(paths.epubDir, {recursive: true, force: true});
+        await ensureDir(paths.epubDir);
+
+        const metaInfDir = path.join(paths.epubDir, 'META-INF');
+        const oebpsDir = path.join(paths.epubDir, 'OEBPS');
+        const chaptersDir = path.join(oebpsDir, 'chapters');
+        const imagesDir = path.join(oebpsDir, 'images');
+        await ensureDir(metaInfDir);
+        await ensureDir(oebpsDir);
+        await ensureDir(chaptersDir);
+        await ensureDir(imagesDir);
+
+        const total = outline && outline.chapters ? outline.chapters.length : 0;
+        logInfo('Preparing epub for story ' + slug + ' (' + total + ' chapters)');
+        for (var i = 1; i <= total; i++) {
+            await ensureChaptersThrough(i, slug, paths, outline, storyConfig);
+        }
+
+        let coverRes = await ensureCover(slug, paths, storyConfig, outline);
+        while (coverRes.status === 'pending') {
+            await sleep(200);
+            coverRes = await ensureCover(slug, paths, storyConfig, outline);
+        }
+        const hasCover = coverRes && coverRes.path;
+
+        await fs.promises.writeFile(path.join(paths.epubDir, 'mimetype'), 'application/epub+zip');
+        const containerXml = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">',
+            '  <rootfiles>',
+            '    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml" />',
+            '  </rootfiles>',
+            '</container>',
+            ''
+        ].join('\n');
+        await fs.promises.writeFile(path.join(metaInfDir, 'container.xml'), containerXml);
+
+        const css = [
+            'body { font-family: "Georgia", serif; line-height: 1.6; margin: 5%; }',
+            'h1, h2 { font-family: "Georgia", serif; }',
+            'h1 { font-size: 1.6em; margin-top: 0.6em; }',
+            'h2 { font-size: 1.3em; margin-top: 1em; }',
+            'p { margin: 0 0 1em 0; }'
+        ].join('\n');
+        await fs.promises.writeFile(path.join(oebpsDir, 'styles.css'), css);
+
+        const identifier = 'story:' + slug;
+        for (var j = 0; j < total; j++) {
+            const idx = j + 1;
+            const padded = String(idx).padStart(3, '0');
+            const chapterInfo = outline.chapters[j] || {};
+            const chapterTitle = chapterInfo.chaptertitle || chapterInfo.title || ('Chapter ' + idx);
+            const md = await fs.promises.readFile(paths.chapterFile(idx), 'utf8');
+            const cleaned = stripLeadingMarkdownTitle(md);
+            const body = [
+                '<h1>' + xmlEscape('Chapter ' + idx + ': ' + chapterTitle) + '</h1>',
+                markdownToXhtmlBody(cleaned)
+            ].join('\n');
+            const xhtml = buildEpubXhtml(chapterTitle, storyConfig.language, body);
+            await fs.promises.writeFile(path.join(chaptersDir, 'chapter-' + padded + '.xhtml'), xhtml);
+        }
+
+        const navXhtml = buildEpubNav(outline);
+        await fs.promises.writeFile(path.join(oebpsDir, 'nav.xhtml'), navXhtml);
+        const tocNcx = buildEpubNcx(identifier, outline);
+        await fs.promises.writeFile(path.join(oebpsDir, 'toc.ncx'), tocNcx);
+        const opf = buildEpubOpf(identifier, outline, storyConfig, !!hasCover);
+        await fs.promises.writeFile(path.join(oebpsDir, 'content.opf'), opf);
+
+        if (hasCover) {
+            await fs.promises.copyFile(coverRes.path, path.join(imagesDir, 'cover.jpg'));
+        }
+
+        await runZip(['-X0', paths.epubFile, 'mimetype'], paths.epubDir);
+        await runZip(['-X9', '-r', paths.epubFile, 'META-INF', 'OEBPS'], paths.epubDir);
+        logInfo('Finished epub for story ' + slug);
+        return {status: 'ready', path: paths.epubFile};
+    } catch (e) {
+        logError('Failed creating epub for story ' + slug, e);
+        throw e;
+    } finally {
+        releaseLock(key);
+    }
+}
+
 async function ensureCover(slug, paths, storyConfig, outline) {
     const exists = await fileExists(paths.cover);
     if (exists) return {status: 'ready', path: paths.cover};
@@ -888,6 +1178,23 @@ async function serveZip(slug, serverConfig) {
     const zipStatus = await ensureZip(slug, paths, outline, storyConfig);
     if (zipStatus.status === 'pending') return buildGenerating('zip');
     return buildZipResponse(zipStatus.stream);
+}
+
+async function serveEpub(slug, serverConfig) {
+    const baseDir = serverConfig.storiesDir || STORIES_DIR;
+    const paths = pathForStory(baseDir, slug);
+    const storyConfRaw = await loadStoryConfig(paths);
+    if (!storyConfRaw) return buildMissing();
+    const storyConfig = normalizeStoryConfig(storyConfRaw, serverConfig);
+    storyConfig.slug = slug;
+    storyConfig.storiesDir = baseDir;
+
+    const outlineResult = await ensureOutline(slug, paths, storyConfig);
+    if (outlineResult.status === 'pending') return buildGenerating('outline');
+    const outline = outlineResult.outline;
+    const epubStatus = await ensureEpub(slug, paths, outline, storyConfig);
+    if (epubStatus.status === 'pending') return buildGenerating('epub');
+    return buildEpubResponse(fs.createReadStream(epubStatus.path));
 }
 
 async function serveCoverImage(slug, serverConfig) {
@@ -1019,8 +1326,9 @@ function buildIndexHtml(slug, config, outline, hasCover) {
         '<div class="d-flex gap-2 flex-wrap mt-2">' +
         '<a class="btn btn-pastel" target="_blank" href="/stories/' + safeSlug + '/outline.json">Outline JSON</a>' +
         '<a class="btn btn-pastel" target="_blank" href="/stories/' + safeSlug + '/feed.rss">Feed</a>' +
+        '<a class="btn btn-pastel" target="_blank" href="/stories/' + safeSlug + '/' + safeSlug + '.epub">Download (epub)</a>' +
         '<a class="btn btn-pastel" target="_blank" href="/stories/' + safeSlug + '/audio/' + safeSlug + '.m3u">Playlist (m3u)</a>' +
-        '<a class="btn btn-pastel" target="_blank" href="/stories/' + safeSlug + '/audio/' + safeSlug + '.zip">Download all (zip)</a>' +
+        '<a class="btn btn-pastel" target="_blank" href="/stories/' + safeSlug + '/audio/' + safeSlug + '.zip">Download all audio (zip)</a>' +
         '</div>' +
         '<div class="clearfix"></div>' +
         '</div>' +
@@ -1261,6 +1569,7 @@ module.exports = {
     serveFeed,
     servePlaylist,
     serveZip,
+    serveEpub,
     serveCoverImage,
     serveStoryIndex,
     serveChapterHtml,
